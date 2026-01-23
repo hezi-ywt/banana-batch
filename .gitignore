@@ -28,3 +28,4 @@ dist
 
 # Backup directories (created by deploy.sh)
 backups/
+.claude/
