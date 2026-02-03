@@ -39,7 +39,8 @@ function extractBase64Data(
 }
 
 /**
- * Constructs the conversation history formatted for the OpenAI API
+ * Constructs the conversation history formatted for the OpenAI API.
+ * Only selected model images are carried forward to avoid leaking prior prompts.
  */
 function buildHistory(messages: Message[]): OpenAI.Chat.ChatCompletionMessageParam[] {
   const history: OpenAI.Chat.ChatCompletionMessageParam[] = [];
@@ -47,34 +48,7 @@ function buildHistory(messages: Message[]): OpenAI.Chat.ChatCompletionMessagePar
   for (const msg of messages) {
     const content: OpenAI.Chat.ChatCompletionContentPart[] = [];
 
-    if (msg.role === 'user') {
-      // Add text first
-      if (msg.text) {
-        content.push({ type: 'text', text: msg.text });
-      }
-
-      // Add uploaded images
-      if (msg.uploadedImages && msg.uploadedImages.length > 0) {
-        for (const img of msg.uploadedImages) {
-          const imageData = extractBase64Data(img.data);
-          if (imageData) {
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: img.data // Use full data URI
-              }
-            });
-          }
-        }
-      }
-
-      if (content.length > 0) {
-        history.push({
-          role: 'user',
-          content
-        });
-      }
-    } else if (msg.role === 'model') {
+    if (msg.role === 'model') {
       // For model messages, check if one image was selected
       if (msg.images && msg.images.length > 0) {
         const selectedImg = msg.images.find((img) => img.id === msg.selectedImageId);
@@ -91,11 +65,6 @@ function buildHistory(messages: Message[]): OpenAI.Chat.ChatCompletionMessagePar
             });
           }
         }
-      }
-
-      // Use the primary text for history
-      if (msg.text) {
-        content.push({ type: 'text', text: msg.text });
       }
 
       if (content.length > 0) {

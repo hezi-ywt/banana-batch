@@ -44,6 +44,7 @@ function extractBase64Data(dataUri: string, imageId?: string): {
 
 /**
  * Constructs the conversation history formatted for the Gemini API.
+ * Only selected model images are carried forward to avoid leaking prior prompts.
  */
 function buildHistory(messages: Message[]): Content[] {
   const history: Content[] = [];
@@ -51,27 +52,7 @@ function buildHistory(messages: Message[]): Content[] {
   for (const msg of messages) {
     const parts: Part[] = [];
 
-    if (msg.role === 'user') {
-      // Add uploaded images first
-      if (msg.uploadedImages && msg.uploadedImages.length > 0) {
-        for (const img of msg.uploadedImages) {
-          const imageData = extractBase64Data(img.data, img.id);
-          if (imageData) {
-            parts.push({
-              inlineData: {
-                mimeType: imageData.mimeType,
-                data: imageData.base64Data
-              }
-            });
-          }
-        }
-      }
-
-      // Add text
-      if (msg.text) {
-        parts.push({ text: msg.text });
-      }
-    } else if (msg.role === 'model') {
+    if (msg.role === 'model') {
       // If the model generated images, check if one was selected
       if (msg.images && msg.images.length > 0) {
         const selectedImg = msg.images.find(img => img.id === msg.selectedImageId);
@@ -88,11 +69,6 @@ function buildHistory(messages: Message[]): Content[] {
             });
           }
         }
-      }
-
-      // Use the primary text for history
-      if (msg.text) {
-        parts.push({ text: msg.text });
       }
     }
 
