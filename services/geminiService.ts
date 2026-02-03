@@ -43,44 +43,51 @@ function extractBase64Data(dataUri: string, imageId?: string): {
 }
 
 /**
- * Constructs the conversation history formatted for the Gemini API.
- * Only selected model images are carried forward to avoid leaking prior prompts.
+ * Collects selected model images to be used as input for the current request.
  */
-function buildHistory(messages: Message[]): Content[] {
-  const history: Content[] = [];
+function collectSelectedImages(messages: Message[]): Part[] {
+  const selectedImages: Part[] = [];
 
   for (const msg of messages) {
-    const parts: Part[] = [];
+    if (msg.role !== 'model' || !msg.selectedImageId || !msg.images) {
+      continue;
+    }
 
-    if (msg.role === 'model') {
-      // If the model generated images, check if one was selected
-      if (msg.images && msg.images.length > 0) {
-        const selectedImg = msg.images.find(img => img.id === msg.selectedImageId);
+    const selectedImg = msg.images.find((img) => img.id === msg.selectedImageId);
+    if (!selectedImg || selectedImg.status !== 'success') {
+      continue;
+    }
 
-        // Only include SUCCESSFUL selected images in history
-        if (selectedImg && selectedImg.status === 'success') {
-          const imageData = extractBase64Data(selectedImg.data, selectedImg.id);
-          if (imageData) {
-            parts.push({
-              inlineData: {
-                mimeType: imageData.mimeType,
-                data: imageData.base64Data
-              }
-            });
-          }
-        }
+    const imageData = extractBase64Data(selectedImg.data, selectedImg.id);
+    if (!imageData) {
+      continue;
+    }
+
+    const estimatedSizeMB = (imageData.base64Data.length * 3 / 4) / (1024 * 1024);
+    if (estimatedSizeMB > VALIDATION_LIMITS.MAX_IMAGE_SIZE_MB) {
+      logError('Image Processing', new ImageProcessingError(
+        `Selected image ${selectedImg.id} is too large (${estimatedSizeMB.toFixed(2)}MB)`
+      ));
+      continue;
+    }
+
+    selectedImages.push({
+      inlineData: {
+        mimeType: imageData.mimeType,
+        data: imageData.base64Data
       }
-    }
-
-    if (parts.length > 0) {
-      history.push({
-        role: msg.role,
-        parts
-      });
-    }
+    });
   }
 
-  return history;
+  return selectedImages;
+}
+
+/**
+ * Constructs the conversation history formatted for the Gemini API.
+ * Intentionally empty: prior text is not carried forward.
+ */
+function buildHistory(_messages: Message[]): Content[] {
+  return [];
 }
 
 function delay(ms: number): Promise<void> {
@@ -126,6 +133,12 @@ export async function generateImageBatchStream(
   
   // Process and validate images first
   const validImages: Part[] = [];
+  const selectedImages = collectSelectedImages(history);
+  if (selectedImages.length > 0) {
+    validImages.push(...selectedImages);
+  }
+
+  const uploadedImageParts: Part[] = [];
   if (uploadedImages && uploadedImages.length > 0) {
     for (const img of uploadedImages) {
       const imageData = extractBase64Data(img.data, img.id);
@@ -144,7 +157,7 @@ export async function generateImageBatchStream(
         continue;
       }
 
-      validImages.push({
+      uploadedImageParts.push({
         inlineData: {
           mimeType: imageData.mimeType,
           data: imageData.base64Data
@@ -153,11 +166,15 @@ export async function generateImageBatchStream(
     }
 
     // Throw error if no valid images were processed
-    if (validImages.length === 0 && uploadedImages.length > 0) {
+    if (uploadedImageParts.length === 0 && uploadedImages.length > 0) {
       throw new ImageProcessingError(
         'No valid images could be processed. Please check image format and size.'
       );
     }
+  }
+
+  if (uploadedImageParts.length > 0) {
+    validImages.push(...uploadedImageParts);
   }
   
   // According to Gemini API docs: text first, then images
