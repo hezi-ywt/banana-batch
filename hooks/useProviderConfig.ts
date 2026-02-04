@@ -6,6 +6,7 @@ import { ValidationError } from '../types/errors';
 const STORAGE_KEYS = {
   PROVIDER: 'app_provider',
   GEMINI_API_KEY: 'user_gemini_api_key',
+  GEMINI_BASE_URL: 'user_gemini_base_url',
   OPENAI_API_KEY: 'user_openai_api_key',
   OPENAI_BASE_URL: 'user_openai_base_url',
   OPENAI_MODEL: 'user_openai_model'
@@ -14,6 +15,14 @@ const STORAGE_KEYS = {
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = 'gemini-3-pro-image-preview';
 const DEFAULT_GEMINI_MODEL = 'gemini-3-pro-image-preview';
+const DEFAULT_GEMINI_BASE_URL = '';
+
+function getStoredGeminiBaseUrl(): string | undefined {
+  const value = localStorage.getItem(STORAGE_KEYS.GEMINI_BASE_URL);
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 /**
  * Custom hook for managing provider configuration with localStorage persistence
@@ -39,7 +48,8 @@ export function useProviderConfig() {
       provider: 'gemini',
       apiKey: localStorage.getItem(STORAGE_KEYS.GEMINI_API_KEY) || '',
       model:
-        localStorage.getItem('user_gemini_model') || DEFAULT_GEMINI_MODEL
+        localStorage.getItem('user_gemini_model') || DEFAULT_GEMINI_MODEL,
+      baseUrl: getStoredGeminiBaseUrl()
     };
   });
 
@@ -60,7 +70,7 @@ export function useProviderConfig() {
           localStorage.getItem(STORAGE_KEYS.GEMINI_API_KEY) || '';
         newConfig.model =
           localStorage.getItem('user_gemini_model') || DEFAULT_GEMINI_MODEL;
-        delete newConfig.baseUrl;
+        newConfig.baseUrl = getStoredGeminiBaseUrl();
       }
 
       localStorage.setItem(STORAGE_KEYS.PROVIDER, provider);
@@ -108,13 +118,23 @@ export function useProviderConfig() {
 
   const updateBaseUrl = useCallback((url: string) => {
     setProviderConfig((prev) => {
-      if (prev.provider !== 'openai') return prev;
+      if (prev.provider === 'openai') {
+        const newConfig = { ...prev, baseUrl: url || DEFAULT_OPENAI_BASE_URL };
+        localStorage.setItem(
+          STORAGE_KEYS.OPENAI_BASE_URL,
+          url || DEFAULT_OPENAI_BASE_URL
+        );
+        return newConfig;
+      }
 
-      const newConfig = { ...prev, baseUrl: url || DEFAULT_OPENAI_BASE_URL };
-      localStorage.setItem(
-        STORAGE_KEYS.OPENAI_BASE_URL,
-        url || DEFAULT_OPENAI_BASE_URL
-      );
+      const trimmed = url.trim();
+      if (trimmed.length === 0) {
+        localStorage.removeItem(STORAGE_KEYS.GEMINI_BASE_URL);
+        return { ...prev, baseUrl: undefined };
+      }
+
+      const newConfig = { ...prev, baseUrl: trimmed };
+      localStorage.setItem(STORAGE_KEYS.GEMINI_BASE_URL, trimmed);
       return newConfig;
     });
   }, []);

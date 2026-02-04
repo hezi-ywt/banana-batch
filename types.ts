@@ -19,7 +19,7 @@ export type Provider = 'gemini' | 'openai';
 export interface ProviderConfig {
   provider: Provider;
   apiKey: string;
-  baseUrl?: string; // For OpenAI custom endpoint
+  baseUrl?: string; // For OpenAI custom endpoint or Gemini proxy
   model?: string; // Model name
 }
 

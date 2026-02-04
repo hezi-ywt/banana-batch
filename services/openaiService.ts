@@ -39,75 +39,55 @@ function extractBase64Data(
 }
 
 /**
- * Constructs the conversation history formatted for the OpenAI API
+ * Collects selected model images to be used as input for the current request.
  */
-function buildHistory(messages: Message[]): OpenAI.Chat.ChatCompletionMessageParam[] {
-  const history: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+function collectSelectedImages(messages: Message[]): OpenAI.Chat.ChatCompletionContentPart[] {
+  const selectedImages: OpenAI.Chat.ChatCompletionContentPart[] = [];
 
   for (const msg of messages) {
-    const content: OpenAI.Chat.ChatCompletionContentPart[] = [];
-
-    if (msg.role === 'user') {
-      // Add text first
-      if (msg.text) {
-        content.push({ type: 'text', text: msg.text });
-      }
-
-      // Add uploaded images
-      if (msg.uploadedImages && msg.uploadedImages.length > 0) {
-        for (const img of msg.uploadedImages) {
-          const imageData = extractBase64Data(img.data);
-          if (imageData) {
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: img.data // Use full data URI
-              }
-            });
-          }
-        }
-      }
-
-      if (content.length > 0) {
-        history.push({
-          role: 'user',
-          content
-        });
-      }
-    } else if (msg.role === 'model') {
-      // For model messages, check if one image was selected
-      if (msg.images && msg.images.length > 0) {
-        const selectedImg = msg.images.find((img) => img.id === msg.selectedImageId);
-
-        // Only include SUCCESSFUL selected images in history
-        if (selectedImg && selectedImg.status === 'success') {
-          const imageData = extractBase64Data(selectedImg.data);
-          if (imageData) {
-            content.push({
-              type: 'image_url',
-              image_url: {
-                url: selectedImg.data // Use full data URI
-              }
-            });
-          }
-        }
-      }
-
-      // Use the primary text for history
-      if (msg.text) {
-        content.push({ type: 'text', text: msg.text });
-      }
-
-      if (content.length > 0) {
-        history.push({
-          role: 'assistant',
-          content
-        });
-      }
+    if (msg.role !== 'model' || !msg.selectedImageId || !msg.images) {
+      continue;
     }
+
+    const selectedImg = msg.images.find((img) => img.id === msg.selectedImageId);
+    if (!selectedImg || selectedImg.status !== 'success') {
+      continue;
+    }
+
+    const imageData = extractBase64Data(selectedImg.data);
+    if (!imageData) {
+      continue;
+    }
+
+    const estimatedSizeMB =
+      (imageData.base64Data.length * 3) / 4 / (1024 * 1024);
+    if (estimatedSizeMB > VALIDATION_LIMITS.MAX_IMAGE_SIZE_MB) {
+      logError(
+        'Image Processing',
+        new ImageProcessingError(
+          `Selected image ${selectedImg.id} is too large (${estimatedSizeMB.toFixed(2)}MB)`
+        )
+      );
+      continue;
+    }
+
+    selectedImages.push({
+      type: 'image_url',
+      image_url: {
+        url: selectedImg.data
+      }
+    });
   }
 
-  return history;
+  return selectedImages;
+}
+
+/**
+ * Constructs the conversation history formatted for the OpenAI API.
+ * Intentionally empty: prior text is not carried forward.
+ */
+function buildHistory(_messages: Message[]): OpenAI.Chat.ChatCompletionMessageParam[] {
+  return [];
 }
 
 function delay(ms: number): Promise<void> {
@@ -151,6 +131,11 @@ export async function generateImageBatchStreamOpenAI(
   // Add text first
   if (prompt) {
     userContent.push({ type: 'text', text: prompt });
+  }
+
+  const selectedImages = collectSelectedImages(history);
+  if (selectedImages.length > 0) {
+    userContent.push(...selectedImages);
   }
 
   // Process and validate images

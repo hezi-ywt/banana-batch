@@ -387,8 +387,8 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
         </p>
       </div>
 
-      {/* OpenAI Base URL */}
-      {config.provider === 'openai' && (
+      {/* Base URL */}
+      {(config.provider === 'openai' || config.provider === 'gemini') && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <label
@@ -396,7 +396,7 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
                 isLight ? 'text-gray-700' : 'text-zinc-300'
               }`}
             >
-              Base URL
+              {config.provider === 'openai' ? 'Base URL' : 'Gemini Base URL'}
             </label>
             {saveStatus.baseUrl && (
               <span
@@ -406,7 +406,7 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
                     : 'text-red-600'
                 }`}
               >
-                {saveStatus.baseUrl === 'saved' ? '✓ 已保存' : '✗ 保存失败'}
+                {saveStatus.baseUrl === 'saved' ? '???????' : '????????'}
               </span>
             )}
           </div>
@@ -415,7 +415,11 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
               type="text"
               value={localBaseUrl}
               onChange={(e) => setLocalBaseUrl(e.target.value)}
-              placeholder="https://api.openai.com/v1"
+              placeholder={
+                config.provider === 'openai'
+                  ? 'https://api.openai.com/v1'
+                  : 'https://generativelanguage.googleapis.com/v1beta'
+              }
               className={`flex-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
                 isLight
                   ? 'bg-gray-50 border-gray-300 text-gray-900'
@@ -439,7 +443,9 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
               isLight ? 'text-gray-500' : 'text-zinc-600'
             }`}
           >
-            支持 OpenAI 兼容接口 (如 Google AI OpenAI endpoint)
+            {config.provider === 'openai'
+              ? '支持 OpenAI 兼容接口 (如Google AI OpenAI endpoint)'
+              : 'Gemini REST Base URL'}
           </p>
         </div>
       )}
