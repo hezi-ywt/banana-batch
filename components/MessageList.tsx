@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Message, AspectRatio } from '../types';
 import { User, Sparkles, CheckCircle2, Circle, AlertTriangle, Loader2, ChevronDown, ChevronUp, MessageSquare, RotateCcw, Trash2, Download } from 'lucide-react';
+import ImagePreviewModal from './ImagePreviewModal';
 
 interface MessageListProps {
   messages: Message[];
@@ -19,6 +20,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
   
   // State to track which message's text details are expanded
   const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
 
   // Optimize scroll behavior - only scroll when messages change or progress updates
   useEffect(() => {
@@ -29,6 +31,14 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
 
   const toggleTextExpansion = useCallback((id: string) => {
     setExpandedTextId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const openPreview = useCallback((src: string, alt: string) => {
+    setPreviewImage({ src, alt });
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewImage(null);
   }, []);
 
   // Download image function (memoized)
@@ -98,6 +108,13 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-8 pb-32">
+      <ImagePreviewModal
+        isOpen={!!previewImage}
+        src={previewImage?.src || ''}
+        alt={previewImage?.alt}
+        onClose={closePreview}
+        theme={theme}
+      />
 
       {messages.length === 0 && (
         <div className={`flex flex-col items-center justify-center h-full space-y-4 opacity-50 ${
@@ -272,10 +289,11 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
               {msg.role === 'model' && msg.images && (
                 <div className="w-full">
                   <div className={`grid gap-4 ${getGridClass(msg.images.length)}`}>
-                    {msg.images.map((img) => {
+                    {msg.images.map((img, imgIndex) => {
                       const isSelected = msg.selectedImageId === img.id;
                       const hasSelection = !!msg.selectedImageId;
                       const isDiscarded = hasSelection && !isSelected;
+                      const previewAlt = `生成图片 ${imgIndex + 1}`;
 
                       // Error Tile
                       if (img.status === 'error') {
@@ -299,6 +317,16 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                         <div 
                           key={img.id} 
                           style={getAspectRatioStyle(msg.generationSettings?.aspectRatio)}
+                          onClick={() => openPreview(img.data, previewAlt)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              openPreview(img.data, previewAlt);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${previewAlt} 预览`}
                           className={`
                             group relative w-full rounded-2xl overflow-hidden border-2 transition-all duration-300
                             ${isLight ? 'bg-gray-50' : 'bg-zinc-900/50'}
@@ -308,7 +336,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                                   ? 'border-gray-200 hover:border-indigo-300 hover:shadow-lg' 
                                   : 'border-zinc-800 hover:border-indigo-600/50 hover:shadow-xl')}
                             ${isDiscarded ? 'opacity-35 grayscale-[0.85] scale-[0.97]' : 'opacity-100'}
-                            hover:scale-[1.01]
+                            hover:scale-[1.01] cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-indigo-500/50
                           `}
                         >
                           <img 
@@ -350,30 +378,36 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                           </button>
                           
                           {/* Selection Overlay */}
-                          <button
-                            onClick={() => onSelectImage(msg.id, img.id)}
+                          <div
                             className={`
                               absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent 
-                              opacity-0 group-hover:opacity-100 transition-all duration-300 
-                              flex flex-col items-center justify-center
+                              opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-10
                               ${isSelected ? 'opacity-100 from-black/40 via-black/10 to-transparent' : ''}
                             `}
-                          >
-                            <div className={`
+                          />
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelectImage(msg.id, img.id);
+                            }}
+                            className={`
+                              absolute bottom-3 left-1/2 -translate-x-1/2 z-20
                               flex items-center space-x-2 px-4 py-2 rounded-full backdrop-blur-md 
-                              transition-all duration-200 transform
+                              transition-all duration-200 transform opacity-0 group-hover:opacity-100
                               ${isSelected 
-                                ? 'bg-indigo-600 text-white shadow-xl scale-105' 
+                                ? 'opacity-100 bg-indigo-600 text-white shadow-xl scale-105' 
                                 : (isLight 
                                     ? 'bg-white/95 text-gray-700 hover:scale-110 shadow-xl' 
                                     : 'bg-zinc-900/95 text-zinc-300 hover:scale-110 shadow-xl')
                               }
-                            `}>
-                              {isSelected ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                              <span className="text-sm font-semibold">
-                                {isSelected ? '已选中' : '选择此图'}
-                              </span>
-                            </div>
+                            `}
+                            title={isSelected ? '取消选择' : '选择此图'}
+                            type="button"
+                          >
+                            {isSelected ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                            <span className="text-sm font-semibold">
+                              {isSelected ? '已选中' : '选择此图'}
+                            </span>
                           </button>
                         </div>
                       );
