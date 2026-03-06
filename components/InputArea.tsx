@@ -1,4 +1,4 @@
-import React, { useState, useRef, KeyboardEvent, DragEvent } from 'react';
+import React, { useState, useRef, useEffect, KeyboardEvent, DragEvent } from 'react';
 import { SendHorizontal, Square, X, Loader2 } from 'lucide-react';
 import { UploadedImage } from '../types';
 import { generateUUID } from '../utils/uuid';
@@ -16,15 +16,22 @@ interface InputAreaProps {
   onStop: () => void;
   disabled: boolean; // This now means "isGenerating" essentially
   theme: 'light' | 'dark';
+  prefillRequest?: { text: string; images?: UploadedImage[] };
 }
 
-const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme }) => {
+const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, prefillRequest }) => {
   const isLight = theme === 'light';
   const [text, setText] = useState('');
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
   const dragCounterRef = useRef(0);
+
+  useEffect(() => {
+    if (!prefillRequest) return;
+    setText(prefillRequest.text ?? '');
+    setUploadedImages(prefillRequest.images ? [...prefillRequest.images] : []);
+  }, [prefillRequest]);
 
   const processFiles = async (files: FileList) => {
     const fileArray = Array.from(files);
