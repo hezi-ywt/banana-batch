@@ -282,11 +282,11 @@ export async function generateImageBatchStream(
         const imageCount = imageInputs.length;
         const imageLabels = Array.from({ length: imageCount }, (_, i) => {
           const num = i + 1;
-          const chineseNum = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?'][num - 1] || num.toString();
-          return `?${chineseNum}??${num}???????`;
-        }).join('?');
+          const chineseNum = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][num - 1] || num.toString();
+          return `图${chineseNum}第${num}张上传的图片`;
+        }).join('、');
         
-        enhancedPrompt = `???????${imageLabels}?
+        enhancedPrompt = `图片顺序如下${imageLabels}?
 
 ${prompt}`;
       }

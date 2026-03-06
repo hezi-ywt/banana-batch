@@ -63,7 +63,7 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
           await generateImageBatchStreamOpenAI(
             providerConfig.apiKey,
             providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-4o',
+            providerConfig.model || 'gpt-image-1',
             prompt,
             currentMessages,
             settings,
@@ -156,7 +156,7 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
           await generateImageBatchStreamOpenAI(
             providerConfig.apiKey,
             providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-4o',
+            providerConfig.model || 'gpt-image-1',
             prompt,
             history,
             settings,

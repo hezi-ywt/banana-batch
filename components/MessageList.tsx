@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { Message, AspectRatio } from '../types';
-import { User, Sparkles, CheckCircle2, Circle, AlertTriangle, Loader2, ChevronDown, ChevronUp, MessageSquare, RotateCcw, Trash2, Download } from 'lucide-react';
+import { User, Sparkles, CheckCircle2, Circle, AlertTriangle, Loader2, ChevronDown, ChevronUp, MessageSquare, RotateCcw, RefreshCcw, Trash2, Download } from 'lucide-react';
 import ImagePreviewModal from './ImagePreviewModal';
 
 interface MessageListProps {
@@ -9,12 +9,13 @@ interface MessageListProps {
   progress: { current: number, total: number } | null;
   onSelectImage: (messageId: string, imageId: string) => void;
   onRetry?: (messageId: string) => void;
+  onRegenerate?: (messageId: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   theme: 'light' | 'dark';
   currentGeneratingMessageId?: string;
 }
 
-const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progress, onSelectImage, onRetry, onDeleteMessage, theme, currentGeneratingMessageId }) => {
+const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progress, onSelectImage, onRetry, onRegenerate, onDeleteMessage, theme, currentGeneratingMessageId }) => {
   const isLight = theme === 'light';
   const bottomRef = useRef<HTMLDivElement>(null);
   
@@ -435,23 +436,44 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                           </span>
                         </div>
                         
-                        {/* Retry button - show next to model messages */}
-                        {onRetry && currentGeneratingMessageId !== msg.id && (
-                          <button
-                            onClick={() => onRetry(msg.id)}
-                            className={`
-                              flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
-                              transition-all duration-200 text-sm font-medium
-                              ${isLight
-                                ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
-                                : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
-                              }
-                            `}
-                            title="生成更多图片（增量添加）"
-                          >
-                            <RotateCcw size={14} />
-                            <span>生成更多</span>
-                          </button>
+                        {/* Action buttons - show next to model messages */}
+                        {(onRetry || onRegenerate) && currentGeneratingMessageId !== msg.id && (
+                          <div className="flex items-center gap-2">
+                            {onRetry && (
+                              <button
+                                onClick={() => onRetry(msg.id)}
+                                className={`
+                                  flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
+                                  transition-all duration-200 text-sm font-medium
+                                  ${isLight
+                                    ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
+                                    : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
+                                  }
+                                `}
+                                title="生成更多图片（增量添加）"
+                              >
+                                <RotateCcw size={14} />
+                                <span>生成更多</span>
+                              </button>
+                            )}
+                            {onRegenerate && (
+                              <button
+                                onClick={() => onRegenerate(msg.id)}
+                                className={`
+                                  flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
+                                  transition-all duration-200 text-sm font-medium
+                                  ${isLight
+                                    ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
+                                    : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
+                                  }
+                                `}
+                                title="重新生成（填充上次输入）"
+                              >
+                                <RefreshCcw size={14} />
+                                <span>重新生成</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                   )}

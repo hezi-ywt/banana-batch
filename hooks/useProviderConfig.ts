@@ -13,7 +13,7 @@ const STORAGE_KEYS = {
 } as const;
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_OPENAI_MODEL = 'gemini-3-pro-image-preview';
+const DEFAULT_OPENAI_MODEL = 'gpt-image-1';
 const DEFAULT_GEMINI_MODEL = 'gemini-3-pro-image-preview';
 const DEFAULT_GEMINI_BASE_URL = '';
 

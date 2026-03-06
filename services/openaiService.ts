@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { Message, GeneratedImage, AppSettings, UploadedImage } from '../types';
+import { Message, GeneratedImage, AppSettings, UploadedImage, AspectRatio, Resolution } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { logError } from '../utils/errorHandler';
 import {
@@ -36,6 +36,69 @@ function extractBase64Data(
   }
 
   return { mimeType: finalMimeType, base64Data };
+}
+
+function shouldUseGeminiCompat(baseUrl: string): boolean {
+  const normalized = baseUrl.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes('generativelanguage.googleapis.com')) return true;
+  if (normalized.includes('/openai')) return true;
+  return false;
+}
+
+function hasReferenceImages(
+  history: Message[],
+  uploadedImages: UploadedImage[] | undefined
+): boolean {
+  if (uploadedImages && uploadedImages.length > 0) return true;
+  return history.some(
+    (msg) =>
+      msg.role === 'model' &&
+      !!msg.selectedImageId &&
+      !!msg.images?.some((img) => img.id === msg.selectedImageId && img.status === 'success')
+  );
+}
+
+function mapAspectRatioToOpenAISize(aspectRatio: AspectRatio | undefined, model: string): string {
+  const normalizedModel = model.toLowerCase();
+  const useDalleSizes = normalizedModel.includes('dall-e-3');
+
+  switch (aspectRatio) {
+    case '9:16':
+    case '3:4':
+      return useDalleSizes ? '1024x1792' : '1024x1536';
+    case '16:9':
+    case '4:3':
+      return useDalleSizes ? '1792x1024' : '1536x1024';
+    case '1:1':
+    case 'Auto':
+    default:
+      return '1024x1024';
+  }
+}
+
+function mapResolutionToOpenAIQuality(
+  resolution: Resolution | undefined,
+  model: string
+): 'standard' | 'hd' | 'low' | 'medium' | 'high' | 'auto' | undefined {
+  const normalizedModel = model.toLowerCase();
+  const isDalle3 = normalizedModel.includes('dall-e-3');
+
+  if (isDalle3) {
+    return resolution && resolution !== '1K' ? 'hd' : 'standard';
+  }
+
+  if (!resolution || resolution === '1K') return 'auto';
+  return 'high';
+}
+
+function inferImageMimeTypeFromUrl(url: string): string {
+  const cleanUrl = url.split('?')[0];
+  const ext = cleanUrl.split('.').pop()?.toLowerCase();
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/png';
 }
 
 /**
@@ -122,6 +185,102 @@ export async function generateImageBatchStreamOpenAI(
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true // Required for browser usage
   });
+
+  const useGeminiCompat = shouldUseGeminiCompat(baseUrl);
+  if (!useGeminiCompat) {
+    // Standard OpenAI Image API flow
+    if (!prompt || prompt.trim().length === 0) {
+      throw new ImageProcessingError('Prompt is required for OpenAI image generation.');
+    }
+
+    if (hasReferenceImages(history, uploadedImages)) {
+      throw new ImageProcessingError(
+        'OpenAI image generation does not support reference images in this mode.'
+      );
+    }
+
+    const normalizedModel = model.toLowerCase();
+    const size = mapAspectRatioToOpenAISize(settings.aspectRatio, model);
+    const quality = mapResolutionToOpenAIQuality(settings.resolution, model);
+    const responseFormat = normalizedModel.includes('dall-e') ? 'b64_json' : undefined;
+
+    let attempt = 0;
+    let response: OpenAI.ImagesResponse | null = null;
+
+    while (attempt <= MAX_RETRIES && !response) {
+      if (signal.aborted) return;
+
+      try {
+        response = await openai.images.generate({
+          model,
+          prompt,
+          n: settings.batchSize,
+          size,
+          ...(quality ? { quality } : {}),
+          ...(responseFormat ? { response_format: responseFormat } : {})
+        });
+      } catch (error) {
+        attempt++;
+
+        if (!signal.aborted) {
+          if (
+            error instanceof Error &&
+            (error.message.includes('fetch') || error.message.includes('network'))
+          ) {
+            logError(`OpenAI Image API Attempt ${attempt}`, new NetworkError(error.message));
+          } else {
+            logError(`OpenAI Image API Attempt ${attempt}`, error);
+          }
+        }
+
+        if (attempt <= MAX_RETRIES && !signal.aborted) {
+          const waitTime = 1000 * Math.pow(2, attempt - 1);
+          await delay(waitTime);
+        }
+      }
+    }
+
+    if (!response) {
+      throw new ImageProcessingError('No response from OpenAI image generation.');
+    }
+
+    const images = response.data || [];
+    if (images.length === 0) {
+      throw new ImageProcessingError('No image data in response');
+    }
+
+    let completed = 0;
+    for (const item of images) {
+      if (signal.aborted) return;
+
+      let imageData: string | undefined;
+      let mimeType = 'image/png';
+
+      if ('b64_json' in item && item.b64_json) {
+        imageData = `data:image/png;base64,${item.b64_json}`;
+      } else if ('url' in item && item.url) {
+        imageData = item.url;
+        mimeType = inferImageMimeTypeFromUrl(item.url);
+      }
+
+      if (imageData) {
+        callbacks.onImage({
+          id: generateUUID(),
+          data: imageData,
+          mimeType,
+          status: 'success'
+        });
+        completed++;
+        callbacks.onProgress(completed, settings.batchSize);
+      }
+    }
+
+    if (completed === 0) {
+      throw new ImageProcessingError('No image data in response');
+    }
+
+    return;
+  }
 
   const formattedHistory = buildHistory(history);
 

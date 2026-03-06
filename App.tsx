@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Banana } from 'lucide-react';
 import { Message, UploadedImage } from './types';
 import { generateUUID } from './utils/uuid';
@@ -59,6 +59,7 @@ const App: React.FC = () => {
   });
 
   const { theme, setTheme } = useTheme();
+  const [prefillRequest, setPrefillRequest] = useState<{ text: string; images?: UploadedImage[] } | null>(null);
 
   // Track the last loaded session to avoid saving when loading
   const lastLoadedSessionRef = useRef<string | null>(null);
@@ -168,16 +169,12 @@ const App: React.FC = () => {
     [isGenerating, settings, addMessages, generateImages]
   );
 
-  // Handle retry
-  const handleRetry = useCallback(
-    async (modelMessageId: string) => {
-      if (isGenerating) return;
-
+  const resolveMessagePair = useCallback(
+    (modelMessageId: string) => {
       const allMessages = getLatestMessages();
       const modelMsgIndex = allMessages.findIndex((msg) => msg.id === modelMessageId);
-      if (modelMsgIndex === -1 || allMessages[modelMsgIndex].role !== 'model') return;
+      if (modelMsgIndex === -1 || allMessages[modelMsgIndex].role !== 'model') return null;
 
-      // Find corresponding user message
       let userMsgIndex = -1;
       for (let i = modelMsgIndex - 1; i >= 0; i--) {
         if (allMessages[i].role === 'user') {
@@ -186,13 +183,26 @@ const App: React.FC = () => {
         }
       }
 
-      if (userMsgIndex === -1) return;
+      if (userMsgIndex === -1) return null;
 
       const userMsg = allMessages[userMsgIndex];
       const modelMsg = allMessages[modelMsgIndex];
-
-      // Get history up to (but not including) this user message
       const history = allMessages.slice(0, userMsgIndex);
+
+      return { userMsg, modelMsg, history };
+    },
+    [getLatestMessages]
+  );
+
+  // Handle retry
+  const handleRetry = useCallback(
+    async (modelMessageId: string) => {
+      if (isGenerating) return;
+
+      const resolved = resolveMessagePair(modelMessageId);
+      if (!resolved) return;
+
+      const { userMsg, modelMsg, history } = resolved;
 
       // Start retry generation
       const currentImageCount = modelMsg.images?.length || 0;
@@ -205,7 +215,22 @@ const App: React.FC = () => {
         userMsg.uploadedImages
       );
     },
-    [isGenerating, settings, getLatestMessages, retryGeneration]
+    [isGenerating, settings, resolveMessagePair, retryGeneration]
+  );
+
+  const handleRegenerate = useCallback(
+    (modelMessageId: string) => {
+      if (isGenerating) return;
+
+      const resolved = resolveMessagePair(modelMessageId);
+      if (!resolved) return;
+
+      setPrefillRequest({
+        text: resolved.userMsg.text || '',
+        images: resolved.userMsg.uploadedImages ?? []
+      });
+    },
+    [isGenerating, resolveMessagePair]
   );
 
   // Handle image selection
@@ -326,6 +351,7 @@ const App: React.FC = () => {
               progress={progress}
               onSelectImage={handleSelectImage}
               onRetry={handleRetry}
+              onRegenerate={handleRegenerate}
               onDeleteMessage={handleDeleteMessages}
               theme={theme}
               currentGeneratingMessageId={
@@ -342,6 +368,7 @@ const App: React.FC = () => {
                 onStop={stopGeneration}
                 disabled={isGenerating}
                 theme={theme}
+                prefillRequest={prefillRequest ?? undefined}
               />
             </div>
           </div>
