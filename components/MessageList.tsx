@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { Message, AspectRatio } from '../types';
+import { Message, AspectRatio, GeneratedImage } from '../types';
 import { User, Sparkles, CheckCircle2, Circle, AlertTriangle, Loader2, ChevronDown, ChevronUp, MessageSquare, RotateCcw, RefreshCcw, Trash2, Download } from 'lucide-react';
 import ImagePreviewModal from './ImagePreviewModal';
+import { getImage } from '../utils/imageStorage';
 
 interface MessageListProps {
   messages: Message[];
@@ -15,10 +16,250 @@ interface MessageListProps {
   currentGeneratingMessageId?: string;
 }
 
-const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progress, onSelectImage, onRetry, onRegenerate, onDeleteMessage, theme, currentGeneratingMessageId }) => {
+/**
+ * 单个图片组件，负责从 IndexedDB 加载图片
+ */
+interface AsyncImageProps {
+  imageRef: GeneratedImage;
+  isSelected: boolean;
+  isDiscarded: boolean;
+  aspectRatio?: AspectRatio;
+  theme: 'light' | 'dark';
+  onClick: () => void;
+  onSelect: () => void;
+  onDownload: () => void;
+  index: number;
+}
+
+const AsyncImage: React.FC<AsyncImageProps> = ({
+  imageRef,
+  isSelected,
+  isDiscarded,
+  aspectRatio,
+  theme,
+  onClick,
+  onSelect,
+  onDownload,
+  index
+}) => {
+  const isLight = theme === 'light';
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  // 异步加载图片数据
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadImage = async () => {
+      if (imageRef.status === 'error') {
+        setError(true);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(false);
+        const record = await getImage(imageRef.id);
+        
+        if (cancelled) return;
+
+        if (record) {
+          setImageData(record.data);
+        } else {
+          // 如果 IndexedDB 中没有，尝试使用引用中可能存在的临时 data
+          // 这在向后兼容或某些边缘情况下有用
+          setError(true);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageRef.id, imageRef.status]);
+
+  // 获取宽高比样式
+  const getAspectRatioStyle = useMemo(() => {
+    switch (aspectRatio) {
+      case '1:1':
+        return { aspectRatio: '1 / 1' };
+      case '3:4':
+        return { aspectRatio: '3 / 4' };
+      case '4:3':
+        return { aspectRatio: '4 / 3' };
+      case '9:16':
+        return { aspectRatio: '9 / 16' };
+      case '16:9':
+        return { aspectRatio: '16 / 9' };
+      case 'Auto':
+      default:
+        return { aspectRatio: '1 / 1' };
+    }
+  }, [aspectRatio]);
+
+  // 错误状态
+  if (error || imageRef.status === 'error') {
+    return (
+      <div
+        style={getAspectRatioStyle}
+        className={`w-full rounded-xl border border-dashed flex flex-col items-center justify-center p-4 ${
+          isLight
+            ? 'bg-gray-100 border-gray-300 text-gray-500'
+            : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+        }`}
+      >
+        <AlertTriangle size={24} className="mb-2 opacity-50 text-amber-500" />
+        <span className="text-xs text-center font-medium">Failed</span>
+      </div>
+    );
+  }
+
+  // 加载状态
+  if (loading) {
+    return (
+      <div
+        style={getAspectRatioStyle}
+        className={`w-full rounded-xl border flex flex-col items-center justify-center p-4 ${
+          isLight
+            ? 'bg-gray-50 border-gray-200 text-gray-400'
+            : 'bg-zinc-900 border-zinc-800 text-zinc-600'
+        }`}
+      >
+        <Loader2 size={24} className="animate-spin text-indigo-500 mb-2" />
+        <span className="text-xs text-center font-medium">Loading...</span>
+      </div>
+    );
+  }
+
+  // 正常显示
+  return (
+    <div
+      style={getAspectRatioStyle}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`生成图片 ${index + 1} 预览`}
+      className={`
+        group relative w-full rounded-2xl overflow-hidden border-2 transition-all duration-300
+        ${isLight ? 'bg-gray-50' : 'bg-zinc-900/50'}
+        ${isSelected
+          ? 'border-indigo-500 shadow-[0_0_25px_rgba(99,102,241,0.4)] scale-[1.03] z-10 ring-2 ring-indigo-500/30'
+          : (isLight
+              ? 'border-gray-200 hover:border-indigo-300 hover:shadow-lg'
+              : 'border-zinc-800 hover:border-indigo-600/50 hover:shadow-xl')}
+        ${isDiscarded ? 'opacity-35 grayscale-[0.85] scale-[0.97]' : 'opacity-100'}
+        hover:scale-[1.01] cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-indigo-500/50
+      `}
+    >
+      <img
+        src={imageData || ''}
+        alt="Generated content"
+        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+        loading="lazy"
+      />
+
+      {/* Selected Badge */}
+      {isSelected && (
+        <div className="absolute top-2 left-2 z-20">
+          <div className={`
+            px-2 py-1 rounded-md text-xs font-semibold backdrop-blur-md
+            ${isLight
+              ? 'bg-indigo-600 text-white shadow-lg'
+              : 'bg-indigo-500 text-white shadow-lg'
+            }
+          `}>
+            已选中
+          </div>
+        </div>
+      )}
+
+      {/* Download Button - Top Right */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (imageData) onDownload();
+        }}
+        className={`
+          absolute top-2 right-2 p-2.5 rounded-xl backdrop-blur-md transition-all z-20
+          opacity-0 group-hover:opacity-100
+          ${isLight
+            ? 'bg-white/95 text-gray-700 hover:bg-white hover:scale-110 shadow-xl border border-gray-200/50'
+            : 'bg-zinc-900/95 text-zinc-300 hover:bg-zinc-800 hover:scale-110 shadow-xl border border-zinc-700/50'
+          }
+        `}
+        title="下载图片"
+      >
+        <Download size={16} />
+      </button>
+
+      {/* Selection Overlay */}
+      <div
+        className={`
+          absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent 
+          opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-10
+          ${isSelected ? 'opacity-100 from-black/40 via-black/10 to-transparent' : ''}
+        `}
+      />
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+        className={`
+          absolute bottom-3 left-1/2 -translate-x-1/2 z-20
+          flex items-center space-x-2 px-4 py-2 rounded-full backdrop-blur-md 
+          transition-all duration-200 transform opacity-0 group-hover:opacity-100
+          ${isSelected
+            ? 'opacity-100 bg-indigo-600 text-white shadow-xl scale-105'
+            : (isLight
+                ? 'bg-white/95 text-gray-700 hover:scale-110 shadow-xl'
+                : 'bg-zinc-900/95 text-zinc-300 hover:scale-110 shadow-xl')
+          }
+        `}
+        title={isSelected ? '取消选择' : '选择此图'}
+        type="button"
+      >
+        {isSelected ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+        <span className="text-sm font-semibold">
+          {isSelected ? '已选中' : '选择此图'}
+        </span>
+      </button>
+    </div>
+  );
+};
+
+const MessageList: React.FC<MessageListProps> = ({
+  messages,
+  isGenerating,
+  progress,
+  onSelectImage,
+  onRetry,
+  onRegenerate,
+  onDeleteMessage,
+  theme,
+  currentGeneratingMessageId
+}) => {
   const isLight = theme === 'light';
   const bottomRef = useRef<HTMLDivElement>(null);
-  
+
   // State to track which message's text details are expanded
   const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
@@ -85,28 +326,6 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
     []
   );
 
-  // Memoize aspect ratio style calculation
-  const getAspectRatioStyle = useMemo(
-    () => (ratio?: AspectRatio) => {
-      switch (ratio) {
-        case '1:1':
-          return { aspectRatio: '1 / 1' };
-        case '3:4':
-          return { aspectRatio: '3 / 4' };
-        case '4:3':
-          return { aspectRatio: '4 / 3' };
-        case '9:16':
-          return { aspectRatio: '9 / 16' };
-        case '16:9':
-          return { aspectRatio: '16 / 9' };
-        case 'Auto':
-        default:
-          return { aspectRatio: '1 / 1' };
-      }
-    },
-    []
-  );
-
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-8 pb-32">
       <ImagePreviewModal
@@ -128,10 +347,10 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
         </div>
       )}
 
-      {messages.map((msg, index) => (
+      {messages.map((msg) => (
         <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
           <div className={`max-w-[90%] w-full flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-            
+
             {/* Delete button - show on hover */}
             {onDeleteMessage && (
               <button
@@ -146,11 +365,11 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                 <Trash2 size={14} />
               </button>
             )}
-            
+
             {/* Avatar */}
             <div className={`
               w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1
-              ${msg.role === 'user' 
+              ${msg.role === 'user'
                 ? (isLight ? 'bg-gray-300' : 'bg-zinc-700')
                 : 'bg-indigo-600'
               }
@@ -160,7 +379,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
 
             {/* Content */}
             <div className={`flex flex-col space-y-3 ${msg.role === 'user' ? 'items-end' : 'items-start'} w-full`}>
-              
+
               {/* User Uploaded Images */}
               {msg.role === 'user' && msg.uploadedImages && msg.uploadedImages.length > 0 && (
                 <div className="flex flex-wrap gap-3 max-w-2xl">
@@ -199,8 +418,8 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                             className={`
                               absolute top-2 right-2 p-2 rounded-lg backdrop-blur-md transition-all z-20
                               opacity-0 group-hover:opacity-100
-                              ${isLight 
-                                ? 'bg-white/95 text-gray-700 hover:bg-white hover:scale-110 shadow-xl border border-gray-200/50' 
+                              ${isLight
+                                ? 'bg-white/95 text-gray-700 hover:bg-white hover:scale-110 shadow-xl border border-gray-200/50'
                                 : 'bg-zinc-900/95 text-zinc-300 hover:bg-zinc-800 hover:scale-110 shadow-xl border border-zinc-700/50'
                               }
                             `}
@@ -226,7 +445,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                   })}
                 </div>
               )}
-              
+
               {/* Text Bubble */}
               {msg.text && (
                 <div className={`
@@ -236,9 +455,9 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                   <div className={`
                     px-5 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap max-w-3xl
                     shadow-md transition-all duration-200
-                    ${msg.role === 'user' 
-                      ? (isLight 
-                          ? 'bg-gradient-to-br from-indigo-100 to-indigo-50 text-gray-900 rounded-tr-sm border border-indigo-200/50' 
+                    ${msg.role === 'user'
+                      ? (isLight
+                          ? 'bg-gradient-to-br from-indigo-100 to-indigo-50 text-gray-900 rounded-tr-sm border border-indigo-200/50'
                           : 'bg-gradient-to-br from-indigo-900/40 to-indigo-800/20 text-zinc-100 rounded-tr-sm border border-indigo-700/30')
                       : (isLight
                           ? 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm'
@@ -251,7 +470,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                   {/* Text Variations Collapsible */}
                   {msg.role === 'model' && msg.textVariations && msg.textVariations.length > 1 && (
                     <div className="mt-1">
-                      <button 
+                      <button
                         onClick={() => toggleTextExpansion(msg.id)}
                         className={`flex items-center space-x-1 text-xs transition-colors ${
                           isLight
@@ -259,11 +478,11 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                             : 'text-zinc-500 hover:text-zinc-300'
                         }`}
                       >
-                         <MessageSquare size={12} />
-                         <span>
-                           {expandedTextId === msg.id ? "Hide" : "Show"} {msg.textVariations.length - 1} other responses
-                         </span>
-                         {expandedTextId === msg.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        <MessageSquare size={12} />
+                        <span>
+                          {expandedTextId === msg.id ? "Hide" : "Show"} {msg.textVariations.length - 1} other responses
+                        </span>
+                        {expandedTextId === msg.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                       </button>
 
                       {expandedTextId === msg.id && (
@@ -294,248 +513,167 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                       const isSelected = msg.selectedImageId === img.id;
                       const hasSelection = !!msg.selectedImageId;
                       const isDiscarded = hasSelection && !isSelected;
-                      const previewAlt = `生成图片 ${imgIndex + 1}`;
-
-                      // Error Tile
-                      if (img.status === 'error') {
-                          return (
-                            <div 
-                                key={img.id}
-                                style={getAspectRatioStyle(msg.generationSettings?.aspectRatio)}
-                                className={`w-full rounded-xl border border-dashed flex flex-col items-center justify-center p-4 ${
-                                  isLight
-                                    ? 'bg-gray-100 border-gray-300 text-gray-500'
-                                    : 'bg-zinc-900 border-zinc-800 text-zinc-600'
-                                }`}
-                            >
-                                <AlertTriangle size={24} className="mb-2 opacity-50 text-amber-500" />
-                                <span className="text-xs text-center font-medium">Failed</span>
-                            </div>
-                          );
-                      }
 
                       return (
-                        <div 
-                          key={img.id} 
-                          style={getAspectRatioStyle(msg.generationSettings?.aspectRatio)}
-                          onClick={() => openPreview(img.data, previewAlt)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              openPreview(img.data, previewAlt);
+                        <AsyncImage
+                          key={img.id}
+                          imageRef={img}
+                          isSelected={isSelected}
+                          isDiscarded={isDiscarded}
+                          aspectRatio={msg.generationSettings?.aspectRatio}
+                          theme={theme}
+                          index={imgIndex}
+                          onClick={async () => {
+                            // 加载预览图片
+                            if (img.status === 'success') {
+                              const record = await getImage(img.id);
+                              if (record) {
+                                openPreview(record.data, `生成图片 ${imgIndex + 1}`);
+                              }
                             }
                           }}
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`${previewAlt} 预览`}
-                          className={`
-                            group relative w-full rounded-2xl overflow-hidden border-2 transition-all duration-300
-                            ${isLight ? 'bg-gray-50' : 'bg-zinc-900/50'}
-                            ${isSelected 
-                              ? 'border-indigo-500 shadow-[0_0_25px_rgba(99,102,241,0.4)] scale-[1.03] z-10 ring-2 ring-indigo-500/30' 
-                              : (isLight 
-                                  ? 'border-gray-200 hover:border-indigo-300 hover:shadow-lg' 
-                                  : 'border-zinc-800 hover:border-indigo-600/50 hover:shadow-xl')}
-                            ${isDiscarded ? 'opacity-35 grayscale-[0.85] scale-[0.97]' : 'opacity-100'}
-                            hover:scale-[1.01] cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-indigo-500/50
-                          `}
-                        >
-                          <img 
-                            src={img.data} 
-                            alt="Generated content" 
-                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                            loading="lazy"
-                          />
-                          
-                          {/* Selected Badge */}
-                          {isSelected && (
-                            <div className="absolute top-2 left-2 z-20">
-                              <div className={`
-                                px-2 py-1 rounded-md text-xs font-semibold backdrop-blur-md
-                                ${isLight 
-                                  ? 'bg-indigo-600 text-white shadow-lg' 
-                                  : 'bg-indigo-500 text-white shadow-lg'
-                                }
-                              `}>
-                                已选中
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Download Button - Top Right */}
-                          <button
-                            onClick={(e) => handleDownloadImage(e, img.data, img.mimeType)}
-                            className={`
-                              absolute top-2 right-2 p-2.5 rounded-xl backdrop-blur-md transition-all z-20
-                              opacity-0 group-hover:opacity-100
-                              ${isLight 
-                                ? 'bg-white/95 text-gray-700 hover:bg-white hover:scale-110 shadow-xl border border-gray-200/50' 
-                                : 'bg-zinc-900/95 text-zinc-300 hover:bg-zinc-800 hover:scale-110 shadow-xl border border-zinc-700/50'
+                          onSelect={() => onSelectImage(msg.id, img.id)}
+                          onDownload={async () => {
+                            if (img.status === 'success') {
+                              const record = await getImage(img.id);
+                              if (record) {
+                                const link = document.createElement('a');
+                                link.href = record.data;
+                                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                                const extension = record.mimeType.split('/')[1] || 'png';
+                                link.download = `banana-batch-${timestamp}.${extension}`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
                               }
-                            `}
-                            title="下载图片"
-                          >
-                            <Download size={16} />
-                          </button>
-                          
-                          {/* Selection Overlay */}
-                          <div
-                            className={`
-                              absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent 
-                              opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none z-10
-                              ${isSelected ? 'opacity-100 from-black/40 via-black/10 to-transparent' : ''}
-                            `}
-                          />
-                          <button
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onSelectImage(msg.id, img.id);
-                            }}
-                            className={`
-                              absolute bottom-3 left-1/2 -translate-x-1/2 z-20
-                              flex items-center space-x-2 px-4 py-2 rounded-full backdrop-blur-md 
-                              transition-all duration-200 transform opacity-0 group-hover:opacity-100
-                              ${isSelected 
-                                ? 'opacity-100 bg-indigo-600 text-white shadow-xl scale-105' 
-                                : (isLight 
-                                    ? 'bg-white/95 text-gray-700 hover:scale-110 shadow-xl' 
-                                    : 'bg-zinc-900/95 text-zinc-300 hover:scale-110 shadow-xl')
-                              }
-                            `}
-                            title={isSelected ? '取消选择' : '选择此图'}
-                            type="button"
-                          >
-                            {isSelected ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                            <span className="text-sm font-semibold">
-                              {isSelected ? '已选中' : '选择此图'}
-                            </span>
-                          </button>
-                        </div>
+                            }
+                          }}
+                        />
                       );
                     })}
                   </div>
-                  
+
                   {msg.images.length > 0 && (
-                      <div className={`mt-4 flex items-center justify-between px-1 ${
-                        isLight ? 'text-gray-500' : 'text-zinc-400'
-                      }`}>
-                        <div className="flex items-center space-x-2.5">
-                          <div className={`
-                            w-2 h-2 rounded-full transition-all duration-300
-                            ${currentGeneratingMessageId === msg.id && !msg.selectedImageId 
-                              ? 'bg-indigo-500 animate-pulse shadow-lg shadow-indigo-500/50' 
-                              : (isLight ? 'bg-gray-400' : 'bg-zinc-600')
-                            }
-                          `}></div>
-                          <span className="text-sm font-medium">
-                          {msg.selectedImageId 
-                              ? `已选中 1 张图片，共生成 ${msg.images.length} 张` 
-                              : currentGeneratingMessageId === msg.id
-                                  ? `正在生成... 已完成 ${msg.images.length} 张` 
-                                  : `已生成 ${msg.images.length} 张图片`}
-                          </span>
-                        </div>
-                        
-                        {/* Action buttons - show next to model messages */}
-                        {(onRetry || onRegenerate) && currentGeneratingMessageId !== msg.id && (
-                          <div className="flex items-center gap-2">
-                            {onRetry && (
-                              <button
-                                onClick={() => onRetry(msg.id)}
-                                className={`
-                                  flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
-                                  transition-all duration-200 text-sm font-medium
-                                  ${isLight
-                                    ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
-                                    : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
-                                  }
-                                `}
-                                title="生成更多图片（增量添加）"
-                              >
-                                <RotateCcw size={14} />
-                                <span>生成更多</span>
-                              </button>
-                            )}
-                            {onRegenerate && (
-                              <button
-                                onClick={() => onRegenerate(msg.id)}
-                                className={`
-                                  flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
-                                  transition-all duration-200 text-sm font-medium
-                                  ${isLight
-                                    ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
-                                    : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
-                                  }
-                                `}
-                                title="重新生成（填充上次输入）"
-                              >
-                                <RefreshCcw size={14} />
-                                <span>重新生成</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
+                    <div className={`mt-4 flex items-center justify-between px-1 ${
+                      isLight ? 'text-gray-500' : 'text-zinc-400'
+                    }`}>
+                      <div className="flex items-center space-x-2.5">
+                        <div className={`
+                          w-2 h-2 rounded-full transition-all duration-300
+                          ${currentGeneratingMessageId === msg.id && !msg.selectedImageId
+                            ? 'bg-indigo-500 animate-pulse shadow-lg shadow-indigo-500/50'
+                            : (isLight ? 'bg-gray-400' : 'bg-zinc-600')
+                          }
+                        `}></div>
+                        <span className="text-sm font-medium">
+                          {msg.selectedImageId
+                            ? `已选中 1 张图片，共生成 ${msg.images.length} 张`
+                            : currentGeneratingMessageId === msg.id
+                              ? `正在生成... 已完成 ${msg.images.length} 张`
+                              : `已生成 ${msg.images.length} 张图片`}
+                        </span>
                       </div>
+
+                      {/* Action buttons - show next to model messages */}
+                      {(onRetry || onRegenerate) && currentGeneratingMessageId !== msg.id && (
+                        <div className="flex items-center gap-2">
+                          {onRetry && (
+                            <button
+                              onClick={() => onRetry(msg.id)}
+                              className={`
+                                flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
+                                transition-all duration-200 text-sm font-medium
+                                ${isLight
+                                  ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
+                                  : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
+                                }
+                              `}
+                              title="生成更多图片（增量添加）"
+                            >
+                              <RotateCcw size={14} />
+                              <span>生成更多</span>
+                            </button>
+                          )}
+                          {onRegenerate && (
+                            <button
+                              onClick={() => onRegenerate(msg.id)}
+                              className={`
+                                flex items-center space-x-1.5 px-3 py-1.5 rounded-lg 
+                                transition-all duration-200 text-sm font-medium
+                                ${isLight
+                                  ? 'text-indigo-600 hover:bg-indigo-50 hover:shadow-md active:scale-95'
+                                  : 'text-indigo-400 hover:bg-indigo-900/30 hover:shadow-md active:scale-95'
+                                }
+                              `}
+                              title="重新生成（填充上次输入）"
+                            >
+                              <RefreshCcw size={14} />
+                              <span>重新生成</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
 
               {/* Error State - only show if no images and an error flag is present */}
               {msg.isError && (!msg.images || msg.images.length === 0) && (
-                 <div className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
-                   isLight
-                     ? 'text-red-600 bg-red-50 border border-red-200'
-                     : 'text-red-400 bg-red-900/10 border border-red-900/50'
-                 }`}>
-                   <div className="flex items-center">
-                     <AlertTriangle size={14} className="mr-2" />
-                     Generation stopped or failed.
-                   </div>
-                   {/* Retry button for failed messages */}
-                   {onRetry && (
-                     <button
-                       onClick={() => onRetry(msg.id)}
-                       className={`flex items-center space-x-1 px-2 py-1 rounded transition-colors ml-4 ${
-                         isLight
-                           ? 'text-indigo-600 hover:bg-indigo-50'
-                           : 'text-indigo-400 hover:bg-indigo-900/20'
-                       }`}
-                       title="重试生成"
-                     >
-                       <RotateCcw size={12} />
-                       <span>重试</span>
-                     </button>
-                   )}
-                 </div>
+                <div className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm ${
+                  isLight
+                    ? 'text-red-600 bg-red-50 border border-red-200'
+                    : 'text-red-400 bg-red-900/10 border border-red-900/50'
+                }`}>
+                  <div className="flex items-center">
+                    <AlertTriangle size={14} className="mr-2" />
+                    Generation stopped or failed.
+                  </div>
+                  {/* Retry button for failed messages */}
+                  {onRetry && (
+                    <button
+                      onClick={() => onRetry(msg.id)}
+                      className={`flex items-center space-x-1 px-2 py-1 rounded transition-colors ml-4 ${
+                        isLight
+                          ? 'text-indigo-600 hover:bg-indigo-50'
+                          : 'text-indigo-400 hover:bg-indigo-900/20'
+                      }`}
+                      title="重试生成"
+                    >
+                      <RotateCcw size={12} />
+                      <span>重试</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
         </div>
       ))}
-      
+
       {/* Loading Indicator for Pending/Queue */}
       {isGenerating && progress && (
         <div className="flex justify-start ml-12">
-           <div className={`flex items-center space-x-3 border rounded-lg px-4 py-2 ${
-             isLight
-               ? 'bg-gray-100 border-gray-300'
-               : 'bg-zinc-900/50 border-zinc-800'
-           }`}>
-                 <Loader2 size={14} className="animate-spin text-indigo-500" />
-                 <span className={`text-xs font-medium ${
-                   isLight ? 'text-gray-600' : 'text-zinc-400'
-                 }`}>
-                    Processing batch... ({progress.current}/{progress.total})
-                 </span>
-                 <div className={`w-24 h-1 rounded-full overflow-hidden ${
-                   isLight ? 'bg-gray-300' : 'bg-zinc-800'
-                 }`}>
-                      <div 
-                        className="h-full bg-indigo-500 transition-all duration-300 ease-out"
-                        style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                      ></div>
-                 </div>
-           </div>
+          <div className={`flex items-center space-x-3 border rounded-lg px-4 py-2 ${
+            isLight
+              ? 'bg-gray-100 border-gray-300'
+              : 'bg-zinc-900/50 border-zinc-800'
+          }`}>
+            <Loader2 size={14} className="animate-spin text-indigo-500" />
+            <span className={`text-xs font-medium ${
+              isLight ? 'text-gray-600' : 'text-zinc-400'
+            }`}>
+              Processing batch... ({progress.current}/{progress.total})
+            </span>
+            <div className={`w-24 h-1 rounded-full overflow-hidden ${
+              isLight ? 'bg-gray-300' : 'bg-zinc-800'
+            }`}>
+              <div
+                className="h-full bg-indigo-500 transition-all duration-300 ease-out"
+                style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              ></div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1,8 +1,18 @@
-export interface GeneratedImage {
+// 图片引用类型（存储在 IndexedDB 中）
+export interface ImageReference {
   id: string;
-  data: string; // Base64 data URI
   mimeType: string;
   status: 'success' | 'error';
+}
+
+// 保留兼容性的类型别名（用于服务层生成时）
+export interface GeneratedImage extends ImageReference {
+  data?: string; // 可选，用于临时传递，不存储
+}
+
+// 完全的数据类型（用于存储）
+export interface GeneratedImageData extends ImageReference {
+  data: string; // Base64 data URI
 }
 
 export interface UploadedImage {

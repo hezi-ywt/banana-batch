@@ -8,6 +8,7 @@ import {
   VALIDATION_LIMITS
 } from "../utils/validation";
 import { ImageProcessingError, SafetyFilterError, ValidationError } from "../types/errors";
+import { storeImage, trimImages, getImage } from "../utils/imageStorage";
 
 const MODEL_PRO = 'gemini-3-pro-image-preview';
 const MAX_CONCURRENT_REQUESTS = 10;
@@ -49,7 +50,7 @@ interface ImageInput {
 /**
  * Collects selected model images to be used as input for the current request.
  */
-function collectSelectedImages(messages: Message[]): ImageInput[] {
+async function collectSelectedImages(messages: Message[]): Promise<ImageInput[]> {
   const selectedImages: ImageInput[] = [];
 
   for (const msg of messages) {
@@ -62,7 +63,16 @@ function collectSelectedImages(messages: Message[]): ImageInput[] {
       continue;
     }
 
-    const imageData = extractBase64Data(selectedImg.data, selectedImg.id);
+    // 从 IndexedDB 获取图片数据
+    const record = await getImage(selectedImg.id);
+    if (!record) {
+      logError('Image Processing', new ImageProcessingError(
+        `Selected image ${selectedImg.id} not found in storage`
+      ));
+      continue;
+    }
+
+    const imageData = extractBase64Data(record.data, selectedImg.id);
     if (!imageData) {
       continue;
     }
@@ -216,7 +226,7 @@ export async function generateImageBatchStream(
   
   // Process and validate images first
   const imageInputs: ImageInput[] = [];
-  const selectedImages = collectSelectedImages(history);
+  const selectedImages = await collectSelectedImages(history);
   if (selectedImages.length > 0) {
     imageInputs.push(...selectedImages);
   }
@@ -407,9 +417,22 @@ ${prompt}`;
             const inlineData = part.inlineData || part.inline_data;
             if (inlineData && inlineData.data) {
               const mimeType = inlineData.mimeType || inlineData.mime_type || 'image/png';
+              const imageId = generateUUID();
+              const imageData = `data:${mimeType};base64,${inlineData.data}`;
+              
+              // 存储到 IndexedDB
+              try {
+                await storeImage(imageId, imageData, mimeType);
+                // 触发图片数量清理
+                await trimImages(1000);
+              } catch (storageError) {
+                logError('Image Storage', storageError);
+                // 即使存储失败，仍然返回图片引用（内存中可用）
+              }
+              
+              // 返回不包含 data 的引用（data 在 IndexedDB 中）
               const img: GeneratedImage = {
-                id: generateUUID(),
-                data: `data:${mimeType};base64,${inlineData.data}`,
+                id: imageId,
                 mimeType,
                 status: 'success'
               };
@@ -445,7 +468,6 @@ ${prompt}`;
       if (!success && !signal.aborted) {
         callbacks.onImage({
           id: generateUUID(),
-          data: '',
           mimeType: '',
           status: 'error'
         });
