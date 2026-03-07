@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Banana } from 'lucide-react';
 import { Message, UploadedImage } from './types';
 import { generateUUID } from './utils/uuid';
 import { getUserErrorMessage } from './utils/errorHandler';
 import { useMessageState } from './hooks/useMessageState';
-import { useSessionState } from './hooks/useSessionState';
-import { useImageGeneration } from './hooks/useImageGeneration';
 import { useSettings } from './hooks/useSettings';
 import { useProviderConfig } from './hooks/useProviderConfig';
 import { useTheme } from './hooks/useTheme';
+import { 
+  useSessionContext, 
+  useGenerationContext 
+} from './contexts';
 import MessageList from './components/MessageList';
 import InputArea from './components/InputArea';
 import SettingsPanel from './components/SettingsPanel';
@@ -16,7 +18,7 @@ import SessionList from './components/SessionList';
 import ErrorBoundary from './components/ErrorBoundary';
 
 const App: React.FC = () => {
-  // Session management
+  // === Context Hooks ===
   const {
     sessions,
     currentSessionId,
@@ -26,10 +28,18 @@ const App: React.FC = () => {
     deleteSession,
     updateSessionTitle,
     updateSessionMessages,
-    clearCurrentSession
-  } = useSessionState();
+    clearCurrentSession,
+  } = useSessionContext();
 
-  // Message state (for current session)
+  const {
+    isGenerating,
+    progress,
+    generateImages,
+    retryGeneration,
+    stopGeneration,
+  } = useGenerationContext();
+
+  // === Local Hooks ===
   const {
     messages,
     getLatestMessages,
@@ -40,7 +50,7 @@ const App: React.FC = () => {
     selectImage,
     deleteMessagesFrom,
     clearAllMessages,
-    replaceAllMessages
+    replaceAllMessages,
   } = useMessageState();
 
   const {
@@ -48,57 +58,55 @@ const App: React.FC = () => {
     updateProvider,
     updateApiKey,
     updateBaseUrl,
-    updateModel
+    updateModel,
   } = useProviderConfig();
 
   const { settings, updateSettings, updateProviderConfig } = useSettings({
     batchSize: 2,
     aspectRatio: 'Auto',
     resolution: '1K',
-    providerConfig
+    providerConfig,
   });
 
   const { theme, setTheme } = useTheme();
-  const [prefillRequest, setPrefillRequest] = useState<{ text: string; images?: UploadedImage[] } | null>(null);
+  
+  // === Local State ===
+  const [prefillRequest, setPrefillRequest] = useState<{ 
+    text: string; 
+    images?: UploadedImage[] 
+  } | null>(null);
 
-  // Track the last loaded session to avoid saving when loading
-  const lastLoadedSessionRef = useRef<string | null>(null);
-  const isInitialLoadRef = useRef(true);
-
-  // Load messages when switching sessions
-  useEffect(() => {
-    const currentSession = getCurrentSession();
-    if (currentSession) {
-      lastLoadedSessionRef.current = currentSessionId;
-      replaceAllMessages(currentSession.messages);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId]); // Only depend on sessionId change
-
-  // Save messages to current session whenever they change
-  useEffect(() => {
-    // Skip initial load
-    if (isInitialLoadRef.current) {
-      isInitialLoadRef.current = false;
-      return;
-    }
-
-    // Skip if we just loaded this session (avoid saving right after loading)
-    if (lastLoadedSessionRef.current === currentSessionId) {
-      lastLoadedSessionRef.current = null;
-      return;
-    }
-
-    // Save messages to current session
-    updateSessionMessages(currentSessionId, messages);
-  }, [messages, currentSessionId, updateSessionMessages]);
-
-  // Sync provider config to settings when it changes
+  // === Effects ===
+  
+  // 同步 provider config 到 settings
   useEffect(() => {
     updateProviderConfig(providerConfig);
   }, [providerConfig, updateProviderConfig]);
 
-  // Image generation callbacks
+  // 切换会话时加载消息
+  useEffect(() => {
+    const currentSession = getCurrentSession();
+    if (currentSession) {
+      replaceAllMessages(currentSession.messages);
+    }
+  }, [currentSessionId, getCurrentSession, replaceAllMessages]);
+
+  // 消息变化时保存到当前会话
+  useEffect(() => {
+    // 跳过首次加载（当消息与会话消息相同时）
+    const currentSession = getCurrentSession();
+    if (currentSession && JSON.stringify(currentSession.messages) === JSON.stringify(messages)) {
+      return;
+    }
+    
+    if (messages.length > 0 || currentSession?.messages.length > 0) {
+      updateSessionMessages(currentSessionId, messages);
+    }
+  }, [messages, currentSessionId, updateSessionMessages, getCurrentSession]);
+
+  // === Handlers ===
+
+  // 图片生成回调
   const handleImageGenerated = useCallback(
     (messageId: string, image: import('./types').GeneratedImage) => {
       addImageToMessage(messageId, image);
@@ -118,35 +126,27 @@ const App: React.FC = () => {
       const userMessage = getUserErrorMessage(error);
       updateMessage(messageId, {
         isError: true,
-        text: userMessage
+        text: userMessage,
       });
     },
     [updateMessage]
   );
 
-  const { isGenerating, progress, generateImages, retryGeneration, stopGeneration } =
-    useImageGeneration({
-      onImageGenerated: handleImageGenerated,
-      onTextGenerated: handleTextGenerated,
-      onError: handleGenerationError,
-      getLatestMessages
-    });
-
-  // Handle sending new message
+  // 发送新消息
   const handleSend = useCallback(
     async (text: string, images?: UploadedImage[]) => {
       if (isGenerating) return;
 
-      // Create user message
+      // 创建用户消息
       const userMsg: Message = {
         id: generateUUID(),
         role: 'user',
         text: text || undefined,
         uploadedImages: images,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
-      // Create model message placeholder
+      // 创建模型消息占位符
       const modelMsgId = generateUUID();
       const modelMsg: Message = {
         id: modelMsgId,
@@ -155,25 +155,47 @@ const App: React.FC = () => {
         textVariations: [],
         images: [],
         generationSettings: {
-          aspectRatio: settings.aspectRatio
+          aspectRatio: settings.aspectRatio,
         },
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
-      // Add both messages
+      // 添加两条消息
       addMessages([userMsg, modelMsg]);
 
-      // Start generation
-      await generateImages(text || '', settings, modelMsgId, images);
+      // 开始生成
+      await generateImages(
+        text || '',
+        settings,
+        modelMsgId,
+        images,
+        handleImageGenerated,
+        handleTextGenerated,
+        handleGenerationError,
+        getLatestMessages
+      );
     },
-    [isGenerating, settings, addMessages, generateImages]
+    [
+      isGenerating, 
+      settings, 
+      addMessages, 
+      generateImages, 
+      handleImageGenerated, 
+      handleTextGenerated, 
+      handleGenerationError,
+      getLatestMessages
+    ]
   );
 
+  // 解析消息对（用于重试/重新生成）
   const resolveMessagePair = useCallback(
     (modelMessageId: string) => {
       const allMessages = getLatestMessages();
-      const modelMsgIndex = allMessages.findIndex((msg) => msg.id === modelMessageId);
-      if (modelMsgIndex === -1 || allMessages[modelMsgIndex].role !== 'model') return null;
+      const modelMsgIndex = allMessages.findIndex(
+        (msg) => msg.id === modelMessageId
+      );
+      if (modelMsgIndex === -1 || allMessages[modelMsgIndex].role !== 'model')
+        return null;
 
       let userMsgIndex = -1;
       for (let i = modelMsgIndex - 1; i >= 0; i--) {
@@ -194,7 +216,7 @@ const App: React.FC = () => {
     [getLatestMessages]
   );
 
-  // Handle retry
+  // 重试生成
   const handleRetry = useCallback(
     async (modelMessageId: string) => {
       if (isGenerating) return;
@@ -204,7 +226,7 @@ const App: React.FC = () => {
 
       const { userMsg, modelMsg, history } = resolved;
 
-      // Start retry generation
+      // 开始重试生成
       const currentImageCount = modelMsg.images?.length || 0;
       await retryGeneration(
         userMsg.text || '',
@@ -212,12 +234,24 @@ const App: React.FC = () => {
         settings,
         modelMessageId,
         currentImageCount,
-        userMsg.uploadedImages
+        userMsg.uploadedImages,
+        handleImageGenerated,
+        handleTextGenerated,
+        handleGenerationError
       );
     },
-    [isGenerating, settings, resolveMessagePair, retryGeneration]
+    [
+      isGenerating, 
+      settings, 
+      resolveMessagePair, 
+      retryGeneration,
+      handleImageGenerated,
+      handleTextGenerated,
+      handleGenerationError
+    ]
   );
 
+  // 重新生成（填充输入）
   const handleRegenerate = useCallback(
     (modelMessageId: string) => {
       if (isGenerating) return;
@@ -227,13 +261,13 @@ const App: React.FC = () => {
 
       setPrefillRequest({
         text: resolved.userMsg.text || '',
-        images: resolved.userMsg.uploadedImages ?? []
+        images: resolved.userMsg.uploadedImages ?? [],
       });
     },
     [isGenerating, resolveMessagePair]
   );
 
-  // Handle image selection
+  // 选择图片
   const handleSelectImage = useCallback(
     (messageId: string, imageId: string) => {
       selectImage(messageId, imageId);
@@ -241,7 +275,7 @@ const App: React.FC = () => {
     [selectImage]
   );
 
-  // Handle message deletion
+  // 删除消息
   const handleDeleteMessages = useCallback(
     (messageId: string) => {
       deleteMessagesFrom(messageId);
@@ -249,7 +283,7 @@ const App: React.FC = () => {
     [deleteMessagesFrom]
   );
 
-  // Handle clear current session
+  // 清空当前会话
   const handleClearAll = useCallback(() => {
     if (isGenerating) {
       stopGeneration();
@@ -258,7 +292,7 @@ const App: React.FC = () => {
     clearCurrentSession();
   }, [isGenerating, stopGeneration, clearAllMessages, clearCurrentSession]);
 
-  // Handle API key change
+  // API Key 变更
   const handleApiKeyChange = useCallback(
     (key: string) => {
       try {
@@ -271,6 +305,7 @@ const App: React.FC = () => {
     [updateApiKey]
   );
 
+  // === Render ===
   return (
     <ErrorBoundary>
       <div
