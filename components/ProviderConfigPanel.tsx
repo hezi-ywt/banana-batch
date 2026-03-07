@@ -16,14 +16,14 @@ interface ProviderConfigPanelProps {
 // Predefined Gemini models
 const GEMINI_MODELS = [
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (推荐)' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (快速)' }
+  { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (快速)' }
 ] as const;
 
 // Predefined OpenAI compatible models
 const OPENAI_MODELS = [
   { value: 'gpt-image-1', label: 'GPT Image 1' },
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (推荐)' },
-  { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (快速)' },
+  { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (快速)' },
   { value: 'gpt-4o', label: 'GPT-4o' }
 ] as const;
 
@@ -466,7 +466,7 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
               <li>使用 Google Gemini API</li>
               <li>支持预设模型或自定义模型</li>
               <li>推荐: Gemini 3 Pro Image (高质量)</li>
-              <li>快速: Gemini 2.5 Flash Image (速度快)</li>
+              <li>快速: Gemini 3.1 Flash Image (速度快)</li>
             </>
           ) : (
             <>
