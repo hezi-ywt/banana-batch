@@ -1,10 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { Message, AppSettings, UploadedImage, GeneratedImage } from '../types';
-import { generateImageBatchStream } from '../services/geminiService';
-import { generateImageBatchStreamOpenAI } from '../services/openaiService';
-import { generateUUID } from '../utils/uuid';
 import { classifyError, logError } from '../utils/errorHandler';
-import { APIKeyError } from '../types/errors';
+import { runImageGeneration } from '../core/generationEngine';
 
 interface UseImageGenerationOptions {
   onImageGenerated: (messageId: string, image: GeneratedImage) => void;
@@ -39,15 +36,6 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       modelMessageId: string,
       uploadedImages?: UploadedImage[]
     ) => {
-      const { providerConfig } = settings;
-
-      if (!providerConfig.apiKey) {
-        const providerName = providerConfig.provider === 'openai' ? 'OpenAI' : 'Gemini';
-        const error = new APIKeyError('API Key is missing', providerName);
-        onError(modelMessageId, error);
-        return;
-      }
-
       setIsGenerating(true);
       setProgress({ current: 0, total: settings.batchSize });
 
@@ -58,51 +46,24 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
         // Get latest messages at generation time (not from closure)
         const currentMessages = getLatestMessages();
 
-        if (providerConfig.provider === 'openai') {
-          // Use OpenAI service
-          await generateImageBatchStreamOpenAI(
-            providerConfig.apiKey,
-            providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-image-1',
-            prompt,
-            currentMessages,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({ current, total });
-              }
+        await runImageGeneration({
+          prompt,
+          history: currentMessages,
+          uploadedImages,
+          settings,
+          signal: abortControllerRef.current.signal,
+          callbacks: {
+            onImage: (image) => {
+              onImageGenerated(modelMessageId, image);
             },
-            abortControllerRef.current.signal
-          );
-        } else {
-          // Use Gemini service
-          await generateImageBatchStream(
-            providerConfig.apiKey,
-            prompt,
-            currentMessages,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({ current, total });
-              }
+            onText: (text) => {
+              onTextGenerated(modelMessageId, text);
             },
-            abortControllerRef.current.signal
-          );
-        }
+            onProgress: (current, total) => {
+              setProgress({ current, total });
+            }
+          }
+        });
       } catch (error) {
         logError('Image Generation', error);
 
@@ -132,15 +93,6 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       currentImageCount: number,
       uploadedImages?: UploadedImage[]
     ) => {
-      const { providerConfig } = settings;
-
-      if (!providerConfig.apiKey) {
-        const providerName = providerConfig.provider === 'openai' ? 'OpenAI' : 'Gemini';
-        const error = new APIKeyError('API Key is missing', providerName);
-        onError(modelMessageId, error);
-        return;
-      }
-
       setIsGenerating(true);
       setProgress({
         current: currentImageCount,
@@ -151,57 +103,27 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       abortControllerRef.current = new AbortController();
 
       try {
-        if (providerConfig.provider === 'openai') {
-          // Use OpenAI service
-          await generateImageBatchStreamOpenAI(
-            providerConfig.apiKey,
-            providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-image-1',
-            prompt,
-            history,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({
-                  current: currentImageCount + current,
-                  total: currentImageCount + total
-                });
-              }
+        await runImageGeneration({
+          prompt,
+          history,
+          uploadedImages,
+          settings,
+          signal: abortControllerRef.current.signal,
+          callbacks: {
+            onImage: (image) => {
+              onImageGenerated(modelMessageId, image);
             },
-            abortControllerRef.current.signal
-          );
-        } else {
-          // Use Gemini service
-          await generateImageBatchStream(
-            providerConfig.apiKey,
-            prompt,
-            history,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({
-                  current: currentImageCount + current,
-                  total: currentImageCount + total
-                });
-              }
+            onText: (text) => {
+              onTextGenerated(modelMessageId, text);
             },
-            abortControllerRef.current.signal
-          );
-        }
+            onProgress: (current, total) => {
+              setProgress({
+                current: currentImageCount + current,
+                total: currentImageCount + total
+              });
+            }
+          }
+        });
       } catch (error) {
         logError('Image Retry', error);
 
