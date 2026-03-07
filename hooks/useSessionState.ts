@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type React from 'react';
 import { Session, Message } from '../types';
 import { generateUUID } from '../utils/uuid';
@@ -100,6 +100,11 @@ export function useSessionState() {
 
   const sessions = state.sessions;
   const currentSessionId = state.currentSessionId;
+  const sessionsRef = useRef<Session[]>(sessions);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Update sessions while preserving currentSessionId
   const setSessions = useCallback((updater: React.SetStateAction<Session[]>) => {
@@ -133,6 +138,11 @@ export function useSessionState() {
   const getCurrentSession = useCallback((): Session | undefined => {
     return sessions.find(s => s.id === currentSessionId);
   }, [sessions, currentSessionId]);
+
+  const getLatestSessionMessages = useCallback((sessionId: string): Message[] => {
+    const session = sessionsRef.current.find(s => s.id === sessionId);
+    return session ? session.messages : [];
+  }, []);
 
   const createSession = useCallback(() => {
     const newSession = createNewSession();
@@ -188,6 +198,19 @@ export function useSessionState() {
     );
   }, [setSessions]);
 
+  const updateSessionMessagesById = useCallback(
+    (sessionId: string, updater: (prevMessages: Message[]) => Message[]) => {
+      setSessions(prev =>
+        prev.map(session =>
+          session.id === sessionId
+            ? { ...session, messages: updater(session.messages), updatedAt: Date.now() }
+            : session
+        )
+      );
+    },
+    [setSessions]
+  );
+
   const clearCurrentSession = useCallback(() => {
     setSessions(prev =>
       prev.map(session =>
@@ -202,11 +225,13 @@ export function useSessionState() {
     sessions,
     currentSessionId,
     getCurrentSession,
+    getLatestSessionMessages,
     createSession,
     switchSession,
     deleteSession,
     updateSessionTitle,
     updateSessionMessages,
+    updateSessionMessagesById,
     clearCurrentSession
   };
 }

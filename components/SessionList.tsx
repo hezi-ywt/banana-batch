@@ -10,6 +10,7 @@ interface SessionListProps {
   onDeleteSession: (sessionId: string) => void;
   onUpdateTitle: (sessionId: string, title: string) => void;
   theme: 'light' | 'dark';
+  generationStates?: Record<string, { isGenerating: boolean }>;
 }
 
 const SessionList: React.FC<SessionListProps> = ({
@@ -19,7 +20,8 @@ const SessionList: React.FC<SessionListProps> = ({
   onSwitchSession,
   onDeleteSession,
   onUpdateTitle,
-  theme
+  theme,
+  generationStates
 }) => {
   const isLight = theme === 'light';
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -102,6 +104,7 @@ const SessionList: React.FC<SessionListProps> = ({
           const isActive = session.id === currentSessionId;
           const isEditing = editingSessionId === session.id;
           const messageCount = session.messages.length;
+          const isGenerating = !!generationStates?.[session.id]?.isGenerating;
 
           return (
             <div
@@ -213,7 +216,19 @@ const SessionList: React.FC<SessionListProps> = ({
                       <div className={`flex items-center justify-between mt-1 text-xs ${
                         isLight ? 'text-gray-500' : 'text-zinc-500'
                       }`}>
-                        <span>{messageCount} 条消息</span>
+                        <div className="flex items-center gap-2">
+                          <span>{messageCount} 条消息</span>
+                          {isGenerating && (
+                            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                              isLight
+                                ? 'bg-indigo-100 text-indigo-700'
+                                : 'bg-indigo-900/40 text-indigo-300'
+                            }`} title="生成中">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                              生成中
+                            </span>
+                          )}
+                        </div>
                         <span>{formatDate(session.updatedAt)}</span>
                       </div>
                     </>

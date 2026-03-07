@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Banana } from 'lucide-react';
 import { Message, UploadedImage } from './types';
 import { generateUUID } from './utils/uuid';
 import { getUserErrorMessage } from './utils/errorHandler';
-import { useMessageState } from './hooks/useMessageState';
 import { useSessionState } from './hooks/useSessionState';
 import { useImageGeneration } from './hooks/useImageGeneration';
 import { useSettings } from './hooks/useSettings';
@@ -21,27 +20,14 @@ const App: React.FC = () => {
     sessions,
     currentSessionId,
     getCurrentSession,
+    getLatestSessionMessages,
     createSession,
     switchSession,
     deleteSession,
     updateSessionTitle,
-    updateSessionMessages,
+    updateSessionMessagesById,
     clearCurrentSession
   } = useSessionState();
-
-  // Message state (for current session)
-  const {
-    messages,
-    getLatestMessages,
-    addMessages,
-    addImageToMessage,
-    addTextToMessage,
-    updateMessage,
-    selectImage,
-    deleteMessagesFrom,
-    clearAllMessages,
-    replaceAllMessages
-  } = useMessageState();
 
   const {
     providerConfig,
@@ -60,71 +46,130 @@ const App: React.FC = () => {
 
   const { theme, setTheme } = useTheme();
   const [prefillRequest, setPrefillRequest] = useState<{ text: string; images?: UploadedImage[] } | null>(null);
+  const currentSession = getCurrentSession();
+  const messages = currentSession?.messages ?? [];
 
-  // Track the last loaded session to avoid saving when loading
-  const lastLoadedSessionRef = useRef<string | null>(null);
-  const isInitialLoadRef = useRef(true);
-
-  // Load messages when switching sessions
   useEffect(() => {
-    const currentSession = getCurrentSession();
-    if (currentSession) {
-      lastLoadedSessionRef.current = currentSessionId;
-      replaceAllMessages(currentSession.messages);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId]); // Only depend on sessionId change
-
-  // Save messages to current session whenever they change
-  useEffect(() => {
-    // Skip initial load
-    if (isInitialLoadRef.current) {
-      isInitialLoadRef.current = false;
-      return;
-    }
-
-    // Skip if we just loaded this session (avoid saving right after loading)
-    if (lastLoadedSessionRef.current === currentSessionId) {
-      lastLoadedSessionRef.current = null;
-      return;
-    }
-
-    // Save messages to current session
-    updateSessionMessages(currentSessionId, messages);
-  }, [messages, currentSessionId, updateSessionMessages]);
+    setPrefillRequest(null);
+  }, [currentSessionId]);
 
   // Sync provider config to settings when it changes
   useEffect(() => {
     updateProviderConfig(providerConfig);
   }, [providerConfig, updateProviderConfig]);
 
+  const addMessagesToSession = useCallback(
+    (sessionId: string, newMessages: Message[]) => {
+      updateSessionMessagesById(sessionId, (prev) => [...prev, ...newMessages]);
+    },
+    [updateSessionMessagesById]
+  );
+
+  const updateMessageInSession = useCallback(
+    (sessionId: string, messageId: string, updates: Partial<Message>) => {
+      updateSessionMessagesById(sessionId, (prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, ...updates } : msg))
+      );
+    },
+    [updateSessionMessagesById]
+  );
+
+  const addImageToMessageInSession = useCallback(
+    (sessionId: string, messageId: string, image: import('./types').GeneratedImage) => {
+      updateSessionMessagesById(sessionId, (prev) =>
+        prev.map((msg) => {
+          if (msg.id === messageId) {
+            const updatedImages = [...(msg.images || []), image];
+            return { ...msg, images: updatedImages };
+          }
+          return msg;
+        })
+      );
+    },
+    [updateSessionMessagesById]
+  );
+
+  const addTextToMessageInSession = useCallback(
+    (sessionId: string, messageId: string, text: string) => {
+      updateSessionMessagesById(sessionId, (prev) =>
+        prev.map((msg) => {
+          if (msg.id === messageId) {
+            const currentVariations = msg.textVariations || [];
+            if (currentVariations.includes(text)) {
+              return msg;
+            }
+            const nextVariations = [...currentVariations, text];
+            return {
+              ...msg,
+              text: nextVariations[0],
+              textVariations: nextVariations
+            };
+          }
+          return msg;
+        })
+      );
+    },
+    [updateSessionMessagesById]
+  );
+
+  const selectImageInSession = useCallback(
+    (sessionId: string, messageId: string, imageId: string) => {
+      updateSessionMessagesById(sessionId, (prev) =>
+        prev.map((msg) => {
+          if (msg.id === messageId) {
+            const newSelection = msg.selectedImageId === imageId ? undefined : imageId;
+            return { ...msg, selectedImageId: newSelection };
+          }
+          return msg;
+        })
+      );
+    },
+    [updateSessionMessagesById]
+  );
+
+  const deleteMessagesFromSession = useCallback(
+    (sessionId: string, messageId: string) => {
+      updateSessionMessagesById(sessionId, (prev) => {
+        const messageIndex = prev.findIndex((msg) => msg.id === messageId);
+        if (messageIndex === -1) return prev;
+        return prev.slice(0, messageIndex);
+      });
+    },
+    [updateSessionMessagesById]
+  );
+
+  const getLatestMessages = useCallback(
+    (sessionId: string) => getLatestSessionMessages(sessionId),
+    [getLatestSessionMessages]
+  );
+
   // Image generation callbacks
   const handleImageGenerated = useCallback(
-    (messageId: string, image: import('./types').GeneratedImage) => {
-      addImageToMessage(messageId, image);
+    (sessionId: string, messageId: string, image: import('./types').GeneratedImage) => {
+      addImageToMessageInSession(sessionId, messageId, image);
     },
-    [addImageToMessage]
+    [addImageToMessageInSession]
   );
 
   const handleTextGenerated = useCallback(
-    (messageId: string, text: string) => {
-      addTextToMessage(messageId, text);
+    (sessionId: string, messageId: string, text: string) => {
+      addTextToMessageInSession(sessionId, messageId, text);
     },
-    [addTextToMessage]
+    [addTextToMessageInSession]
   );
 
   const handleGenerationError = useCallback(
-    (messageId: string, error: Error) => {
+    (sessionId: string, messageId: string, error: Error) => {
       const userMessage = getUserErrorMessage(error);
-      updateMessage(messageId, {
+      updateMessageInSession(sessionId, messageId, {
         isError: true,
         text: userMessage
       });
     },
-    [updateMessage]
+    [updateMessageInSession]
   );
 
-  const { isGenerating, progress, generateImages, retryGeneration, stopGeneration } =
+  const { generationStates, generateImages, retryGeneration, stopGeneration } =
     useImageGeneration({
       onImageGenerated: handleImageGenerated,
       onTextGenerated: handleTextGenerated,
@@ -132,10 +177,17 @@ const App: React.FC = () => {
       getLatestMessages
     });
 
+  const currentGenerationState = generationStates[currentSessionId] || {
+    isGenerating: false,
+    progress: null,
+    currentMessageId: undefined
+  };
+
   // Handle sending new message
   const handleSend = useCallback(
     async (text: string, images?: UploadedImage[]) => {
-      if (isGenerating) return;
+      if (currentGenerationState.isGenerating) return;
+      const sessionId = currentSessionId;
 
       // Create user message
       const userMsg: Message = {
@@ -161,17 +213,17 @@ const App: React.FC = () => {
       };
 
       // Add both messages
-      addMessages([userMsg, modelMsg]);
+      addMessagesToSession(sessionId, [userMsg, modelMsg]);
 
       // Start generation
-      await generateImages(text || '', settings, modelMsgId, images);
+      await generateImages(sessionId, text || '', settings, modelMsgId, images);
     },
-    [isGenerating, settings, addMessages, generateImages]
+    [currentGenerationState.isGenerating, currentSessionId, settings, addMessagesToSession, generateImages]
   );
 
   const resolveMessagePair = useCallback(
-    (modelMessageId: string) => {
-      const allMessages = getLatestMessages();
+    (sessionId: string, modelMessageId: string) => {
+      const allMessages = getLatestMessages(sessionId);
       const modelMsgIndex = allMessages.findIndex((msg) => msg.id === modelMessageId);
       if (modelMsgIndex === -1 || allMessages[modelMsgIndex].role !== 'model') return null;
 
@@ -197,9 +249,10 @@ const App: React.FC = () => {
   // Handle retry
   const handleRetry = useCallback(
     async (modelMessageId: string) => {
-      if (isGenerating) return;
+      if (currentGenerationState.isGenerating) return;
+      const sessionId = currentSessionId;
 
-      const resolved = resolveMessagePair(modelMessageId);
+      const resolved = resolveMessagePair(sessionId, modelMessageId);
       if (!resolved) return;
 
       const { userMsg, modelMsg, history } = resolved;
@@ -207,6 +260,7 @@ const App: React.FC = () => {
       // Start retry generation
       const currentImageCount = modelMsg.images?.length || 0;
       await retryGeneration(
+        sessionId,
         userMsg.text || '',
         history,
         settings,
@@ -215,14 +269,15 @@ const App: React.FC = () => {
         userMsg.uploadedImages
       );
     },
-    [isGenerating, settings, resolveMessagePair, retryGeneration]
+    [currentGenerationState.isGenerating, currentSessionId, settings, resolveMessagePair, retryGeneration]
   );
 
   const handleRegenerate = useCallback(
     (modelMessageId: string) => {
-      if (isGenerating) return;
+      if (currentGenerationState.isGenerating) return;
+      const sessionId = currentSessionId;
 
-      const resolved = resolveMessagePair(modelMessageId);
+      const resolved = resolveMessagePair(sessionId, modelMessageId);
       if (!resolved) return;
 
       setPrefillRequest({
@@ -230,33 +285,43 @@ const App: React.FC = () => {
         images: resolved.userMsg.uploadedImages ?? []
       });
     },
-    [isGenerating, resolveMessagePair]
+    [currentGenerationState.isGenerating, currentSessionId, resolveMessagePair]
   );
 
   // Handle image selection
   const handleSelectImage = useCallback(
     (messageId: string, imageId: string) => {
-      selectImage(messageId, imageId);
+      selectImageInSession(currentSessionId, messageId, imageId);
     },
-    [selectImage]
+    [currentSessionId, selectImageInSession]
   );
 
   // Handle message deletion
   const handleDeleteMessages = useCallback(
     (messageId: string) => {
-      deleteMessagesFrom(messageId);
+      deleteMessagesFromSession(currentSessionId, messageId);
     },
-    [deleteMessagesFrom]
+    [currentSessionId, deleteMessagesFromSession]
   );
 
   // Handle clear current session
   const handleClearAll = useCallback(() => {
-    if (isGenerating) {
-      stopGeneration();
+    if (currentGenerationState.isGenerating) {
+      stopGeneration(currentSessionId);
     }
-    clearAllMessages();
     clearCurrentSession();
-  }, [isGenerating, stopGeneration, clearAllMessages, clearCurrentSession]);
+  }, [currentGenerationState.isGenerating, currentSessionId, stopGeneration, clearCurrentSession]);
+
+  const handleCreateSession = useCallback(() => {
+    createSession();
+  }, [createSession]);
+
+  const handleSwitchSession = useCallback(
+    (sessionId: string) => {
+      switchSession(sessionId);
+    },
+    [switchSession]
+  );
 
   // Handle API key change
   const handleApiKeyChange = useCallback(
@@ -322,10 +387,10 @@ const App: React.FC = () => {
             hasMessages={messages.length > 0}
             messages={messages}
             onImportMessages={(importedMessages) => {
-              if (isGenerating) {
-                stopGeneration();
+              if (currentGenerationState.isGenerating) {
+                stopGeneration(currentSessionId);
               }
-              replaceAllMessages(importedMessages);
+              updateSessionMessagesById(currentSessionId, () => importedMessages);
             }}
           />
         </header>
@@ -333,40 +398,37 @@ const App: React.FC = () => {
         {/* Main Content */}
         <main className="flex-1 flex min-h-0 relative">
           {/* Session List Sidebar */}
-          <SessionList
-            sessions={sessions}
-            currentSessionId={currentSessionId}
-            onCreateSession={createSession}
-            onSwitchSession={switchSession}
-            onDeleteSession={deleteSession}
-            onUpdateTitle={updateSessionTitle}
-            theme={theme}
-          />
+            <SessionList
+              sessions={sessions}
+              currentSessionId={currentSessionId}
+              onCreateSession={handleCreateSession}
+              onSwitchSession={handleSwitchSession}
+              onDeleteSession={deleteSession}
+              onUpdateTitle={updateSessionTitle}
+              theme={theme}
+              generationStates={generationStates}
+            />
 
           {/* Chat Area */}
           <div className="flex-1 flex flex-col min-h-0">
             <MessageList
               messages={messages}
-              isGenerating={isGenerating}
-              progress={progress}
+              isGenerating={currentGenerationState.isGenerating}
+              progress={currentGenerationState.progress}
               onSelectImage={handleSelectImage}
               onRetry={handleRetry}
               onRegenerate={handleRegenerate}
               onDeleteMessage={handleDeleteMessages}
               theme={theme}
-              currentGeneratingMessageId={
-                isGenerating && messages.length > 0
-                  ? messages[messages.length - 1].id
-                  : undefined
-              }
+              currentGeneratingMessageId={currentGenerationState.currentMessageId}
             />
 
             {/* Input Area (Sticky) */}
             <div className="flex-none z-40">
               <InputArea
                 onSend={handleSend}
-                onStop={stopGeneration}
-                disabled={isGenerating}
+                onStop={() => stopGeneration(currentSessionId)}
+                disabled={currentGenerationState.isGenerating}
                 theme={theme}
                 prefillRequest={prefillRequest ?? undefined}
               />
