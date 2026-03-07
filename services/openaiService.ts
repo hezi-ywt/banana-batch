@@ -13,6 +13,7 @@ import {
   NetworkError
 } from '../types/errors';
 import { StreamCallbacks } from './geminiService';
+import { storeImage, trimImages, getImage } from '../utils/imageStorage';
 
 const MAX_CONCURRENT_REQUESTS = 10;
 const MAX_RETRIES = 3;
@@ -104,7 +105,7 @@ function inferImageMimeTypeFromUrl(url: string): string {
 /**
  * Collects selected model images to be used as input for the current request.
  */
-function collectSelectedImages(messages: Message[]): OpenAI.Chat.ChatCompletionContentPart[] {
+async function collectSelectedImages(messages: Message[]): Promise<OpenAI.Chat.ChatCompletionContentPart[]> {
   const selectedImages: OpenAI.Chat.ChatCompletionContentPart[] = [];
 
   for (const msg of messages) {
@@ -117,7 +118,19 @@ function collectSelectedImages(messages: Message[]): OpenAI.Chat.ChatCompletionC
       continue;
     }
 
-    const imageData = extractBase64Data(selectedImg.data);
+    // 从 IndexedDB 获取图片数据
+    const record = await getImage(selectedImg.id);
+    if (!record) {
+      logError(
+        'Image Processing',
+        new ImageProcessingError(
+          `Selected image ${selectedImg.id} not found in storage`
+        )
+      );
+      continue;
+    }
+
+    const imageData = extractBase64Data(record.data);
     if (!imageData) {
       continue;
     }
@@ -137,7 +150,7 @@ function collectSelectedImages(messages: Message[]): OpenAI.Chat.ChatCompletionC
     selectedImages.push({
       type: 'image_url',
       image_url: {
-        url: selectedImg.data
+        url: record.data
       }
     });
   }
@@ -264,9 +277,20 @@ export async function generateImageBatchStreamOpenAI(
       }
 
       if (imageData) {
+        const imageId = generateUUID();
+        
+        // 存储到 IndexedDB
+        try {
+          await storeImage(imageId, imageData, mimeType);
+          // 触发图片数量清理
+          await trimImages(1000);
+        } catch (storageError) {
+          logError('Image Storage', storageError);
+        }
+        
+        // 返回不包含 data 的引用（data 在 IndexedDB 中）
         callbacks.onImage({
-          id: generateUUID(),
-          data: imageData,
+          id: imageId,
           mimeType,
           status: 'success'
         });
@@ -292,7 +316,7 @@ export async function generateImageBatchStreamOpenAI(
     userContent.push({ type: 'text', text: prompt });
   }
 
-  const selectedImages = collectSelectedImages(history);
+  const selectedImages = await collectSelectedImages(history);
   if (selectedImages.length > 0) {
     userContent.push(...selectedImages);
   }
@@ -406,10 +430,22 @@ export async function generateImageBatchStreamOpenAI(
               /data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/
             );
             if (dataUriMatch) {
+              const imageId = generateUUID();
+              const imageData = dataUriMatch[0];
+              const mimeType = imageData.split(';')[0].split(':')[1];
+              
+              // 存储到 IndexedDB
+              try {
+                await storeImage(imageId, imageData, mimeType);
+                await trimImages(1000);
+              } catch (storageError) {
+                logError('Image Storage', storageError);
+              }
+              
+              // 返回不包含 data 的引用
               const img: GeneratedImage = {
-                id: generateUUID(),
-                data: dataUriMatch[0],
-                mimeType: dataUriMatch[0].split(';')[0].split(':')[1],
+                id: imageId,
+                mimeType,
                 status: 'success'
               };
               callbacks.onImage(img);
@@ -429,10 +465,21 @@ export async function generateImageBatchStreamOpenAI(
                       : part.image_url.url;
 
                   if (imageUrl) {
+                    const imageId = generateUUID();
+                    const mimeType = imageUrl.split(';')[0].split(':')[1] || 'image/png';
+                    
+                    // 存储到 IndexedDB
+                    try {
+                      await storeImage(imageId, imageUrl, mimeType);
+                      await trimImages(1000);
+                    } catch (storageError) {
+                      logError('Image Storage', storageError);
+                    }
+                    
+                    // 返回不包含 data 的引用
                     const img: GeneratedImage = {
-                      id: generateUUID(),
-                      data: imageUrl,
-                      mimeType: imageUrl.split(';')[0].split(':')[1] || 'image/png',
+                      id: imageId,
+                      mimeType,
                       status: 'success'
                     };
                     callbacks.onImage(img);
@@ -484,7 +531,6 @@ export async function generateImageBatchStreamOpenAI(
       if (!success && !signal.aborted) {
         callbacks.onImage({
           id: generateUUID(),
-          data: '',
           mimeType: '',
           status: 'error'
         });
