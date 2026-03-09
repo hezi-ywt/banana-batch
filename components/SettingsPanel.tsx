@@ -286,41 +286,39 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </div>
 
       {/* Export/Import Data Package */}
-      {hasMessages && (
-        <div className={`flex items-center space-x-1 border-r pr-4 ${
-          isLight ? 'border-gray-300' : 'border-zinc-700'
-        }`}>
-          <button 
-            onClick={handleExport}
-            className={`p-1.5 rounded transition-colors ${
-              isLight
-                ? 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
-                : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-900/20'
-            }`}
-            title="导出数据包"
-          >
-            <Download size={16} />
-          </button>
-          <button 
-            onClick={handleImportClick}
-            className={`p-1.5 rounded transition-colors ${
-              isLight
-                ? 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
-                : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-900/20'
-            }`}
-            title="导入数据包"
-          >
-            <Upload size={16} />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            onChange={handleImport}
-            className="hidden"
-          />
-        </div>
-      )}
+      <div className={`flex items-center space-x-1 border-r pr-4 ${
+        isLight ? 'border-gray-300' : 'border-zinc-700'
+      }`}>
+        <button 
+          onClick={handleExport}
+          className={`p-1.5 rounded transition-colors ${
+            isLight
+              ? 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+              : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-900/20'
+          }`}
+          title="导出数据包"
+        >
+          <Download size={16} />
+        </button>
+        <button 
+          onClick={handleImportClick}
+          className={`p-1.5 rounded transition-colors ${
+            isLight
+              ? 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+              : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-900/20'
+          }`}
+          title="导入数据包"
+        >
+          <Upload size={16} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleImport}
+          className="hidden"
+        />
+      </div>
 
       {/* Clear All Messages */}
       {onClearAll && hasMessages && (

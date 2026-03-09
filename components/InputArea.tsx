@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, KeyboardEvent, DragEvent } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, KeyboardEvent, DragEvent } from 'react';
 import { SendHorizontal, Square, X, Loader2 } from 'lucide-react';
 import { UploadedImage } from '../types';
 import { generateUUID } from '../utils/uuid';
@@ -26,12 +26,29 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
   const dragCounterRef = useRef(0);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const MIN_TEXTAREA_HEIGHT = 64;
+  const MAX_TEXTAREA_HEIGHT = 160;
+
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const nextHeight = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT);
+    const clampedHeight = Math.max(nextHeight, MIN_TEXTAREA_HEIGHT);
+    textarea.style.height = `${clampedHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
+  }, []);
 
   useEffect(() => {
     if (!prefillRequest) return;
     setText(prefillRequest.text ?? '');
     setUploadedImages(prefillRequest.images ? [...prefillRequest.images] : []);
   }, [prefillRequest]);
+
+  useLayoutEffect(() => {
+    adjustTextareaHeight();
+  }, [text, adjustTextareaHeight]);
 
   const processFiles = async (files: FileList) => {
     const fileArray = Array.from(files);
@@ -304,6 +321,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
 
         <div className="relative">
           <textarea
+            ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -330,14 +348,13 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
               }
             `}
             rows={1}
-            style={{ height: '64px' }}
           />
           
           {disabled ? (
             <button
               onClick={onStop}
               className={`
-                absolute right-2.5 top-2.5 bottom-2.5 aspect-square rounded-xl 
+                absolute right-2.5 bottom-2.5 w-10 h-10 rounded-xl 
                 flex items-center justify-center transition-all duration-200
                 ${isLight
                   ? 'bg-red-500/10 text-red-600 hover:bg-red-500 hover:text-white border border-red-500/30 hover:border-red-500 shadow-md hover:scale-105'
@@ -353,7 +370,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
               onClick={handleSend}
               disabled={(!text.trim() && uploadedImages.length === 0) || isProcessingImages}
               className={`
-                absolute right-2.5 top-2.5 bottom-2.5 aspect-square rounded-xl
+                absolute right-2.5 bottom-2.5 w-10 h-10 rounded-xl
                 flex items-center justify-center transition-all duration-200
                 ${((!text.trim() && uploadedImages.length === 0) || isProcessingImages)
                   ? (isLight

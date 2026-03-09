@@ -1,130 +1,132 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Message, AppSettings, UploadedImage, GeneratedImage } from '../types';
-import { generateImageBatchStream } from '../services/geminiService';
-import { generateImageBatchStreamOpenAI } from '../services/openaiService';
-import { generateUUID } from '../utils/uuid';
 import { classifyError, logError } from '../utils/errorHandler';
-import { APIKeyError } from '../types/errors';
+import { runImageGeneration } from '../core/generationEngine';
 
 interface UseImageGenerationOptions {
-  onImageGenerated: (messageId: string, image: GeneratedImage) => void;
-  onTextGenerated: (messageId: string, text: string) => void;
-  onError: (messageId: string, error: Error) => void;
-  getLatestMessages: () => Message[];
+  onImageGenerated: (sessionId: string, messageId: string, image: GeneratedImage) => void;
+  onTextGenerated: (sessionId: string, messageId: string, text: string) => void;
+  onError: (sessionId: string, messageId: string, error: Error) => void;
+  getLatestMessages: (sessionId: string) => Message[];
+}
+
+interface GenerationState {
+  isGenerating: boolean;
+  progress: { current: number; total: number } | null;
+  currentMessageId?: string;
 }
 
 /**
- * Custom hook for managing image generation with proper abort handling
+ * Custom hook for managing per-session image generation with abort handling
  */
 export function useImageGeneration(options: UseImageGenerationOptions) {
   const { onImageGenerated, onTextGenerated, onError, getLatestMessages } = options;
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [generationStates, setGenerationStates] = useState<Record<string, GenerationState>>({});
+  const generationStatesRef = useRef<Record<string, GenerationState>>(generationStates);
+  const abortControllersRef = useRef<Record<string, AbortController>>({});
 
-  const stopGeneration = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setIsGenerating(false);
-      setProgress(null);
-    }
-  }, []);
+  useEffect(() => {
+    generationStatesRef.current = generationStates;
+  }, [generationStates]);
+
+  const setSessionState = useCallback(
+    (sessionId: string, updater: (prev: GenerationState) => GenerationState) => {
+      setGenerationStates((prev) => {
+        const current = prev[sessionId] || { isGenerating: false, progress: null };
+        const next = updater(current);
+        return {
+          ...prev,
+          [sessionId]: next
+        };
+      });
+    },
+    []
+  );
+
+  const stopGeneration = useCallback(
+    (sessionId: string) => {
+      const controller = abortControllersRef.current[sessionId];
+      if (controller) {
+        controller.abort();
+        delete abortControllersRef.current[sessionId];
+      }
+      setSessionState(sessionId, () => ({
+        isGenerating: false,
+        progress: null,
+        currentMessageId: undefined
+      }));
+    },
+    [setSessionState]
+  );
 
   const generateImages = useCallback(
     async (
+      sessionId: string,
       prompt: string,
       settings: AppSettings,
       modelMessageId: string,
       uploadedImages?: UploadedImage[]
     ) => {
-      const { providerConfig } = settings;
+      if (generationStatesRef.current[sessionId]?.isGenerating) return;
 
-      if (!providerConfig.apiKey) {
-        const providerName = providerConfig.provider === 'openai' ? 'OpenAI' : 'Gemini';
-        const error = new APIKeyError('API Key is missing', providerName);
-        onError(modelMessageId, error);
-        return;
-      }
+      setSessionState(sessionId, () => ({
+        isGenerating: true,
+        progress: { current: 0, total: settings.batchSize },
+        currentMessageId: modelMessageId
+      }));
 
-      setIsGenerating(true);
-      setProgress({ current: 0, total: settings.batchSize });
-
-      // Create new abort controller
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllersRef.current[sessionId] = controller;
 
       try {
-        // Get latest messages at generation time (not from closure)
-        const currentMessages = getLatestMessages();
+        const currentMessages = getLatestMessages(sessionId);
 
-        if (providerConfig.provider === 'openai') {
-          // Use OpenAI service
-          await generateImageBatchStreamOpenAI(
-            providerConfig.apiKey,
-            providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-image-1',
-            prompt,
-            currentMessages,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({ current, total });
-              }
+        await runImageGeneration({
+          prompt,
+          history: currentMessages,
+          uploadedImages,
+          settings,
+          signal: controller.signal,
+          callbacks: {
+            onImage: (image) => {
+              onImageGenerated(sessionId, modelMessageId, image);
             },
-            abortControllerRef.current.signal
-          );
-        } else {
-          // Use Gemini service
-          await generateImageBatchStream(
-            providerConfig.apiKey,
-            prompt,
-            currentMessages,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({ current, total });
-              }
+            onText: (text) => {
+              onTextGenerated(sessionId, modelMessageId, text);
             },
-            abortControllerRef.current.signal
-          );
-        }
+            onProgress: (current, total) => {
+              setSessionState(sessionId, (prev) => ({
+                ...prev,
+                progress: { current, total }
+              }));
+            }
+          }
+        });
       } catch (error) {
         logError('Image Generation', error);
 
-        // Only handle error if not aborted
-        if (!abortControllerRef.current?.signal.aborted) {
+        if (!controller.signal.aborted) {
           const classifiedError = classifyError(error);
-          onError(modelMessageId, classifiedError);
+          onError(sessionId, modelMessageId, classifiedError);
         }
       } finally {
-        // Only reset if not already stopped manually
-        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
-          setIsGenerating(false);
-          setProgress(null);
-          abortControllerRef.current = null;
+        if (abortControllersRef.current[sessionId] === controller) {
+          delete abortControllersRef.current[sessionId];
+          setSessionState(sessionId, () => ({
+            isGenerating: false,
+            progress: null,
+            currentMessageId: undefined
+          }));
         }
       }
     },
-    [onImageGenerated, onTextGenerated, onError, getLatestMessages]
+    [getLatestMessages, onImageGenerated, onTextGenerated, onError, setSessionState]
   );
 
   const retryGeneration = useCallback(
     async (
+      sessionId: string,
       prompt: string,
       history: Message[],
       settings: AppSettings,
@@ -132,97 +134,69 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       currentImageCount: number,
       uploadedImages?: UploadedImage[]
     ) => {
-      const { providerConfig } = settings;
+      if (generationStatesRef.current[sessionId]?.isGenerating) return;
 
-      if (!providerConfig.apiKey) {
-        const providerName = providerConfig.provider === 'openai' ? 'OpenAI' : 'Gemini';
-        const error = new APIKeyError('API Key is missing', providerName);
-        onError(modelMessageId, error);
-        return;
-      }
+      setSessionState(sessionId, () => ({
+        isGenerating: true,
+        progress: {
+          current: currentImageCount,
+          total: currentImageCount + settings.batchSize
+        },
+        currentMessageId: modelMessageId
+      }));
 
-      setIsGenerating(true);
-      setProgress({
-        current: currentImageCount,
-        total: currentImageCount + settings.batchSize
-      });
-
-      // Create new abort controller
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllersRef.current[sessionId] = controller;
 
       try {
-        if (providerConfig.provider === 'openai') {
-          // Use OpenAI service
-          await generateImageBatchStreamOpenAI(
-            providerConfig.apiKey,
-            providerConfig.baseUrl || 'https://api.openai.com/v1',
-            providerConfig.model || 'gpt-image-1',
-            prompt,
-            history,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({
+        await runImageGeneration({
+          prompt,
+          history,
+          uploadedImages,
+          settings,
+          signal: controller.signal,
+          callbacks: {
+            onImage: (image) => {
+              onImageGenerated(sessionId, modelMessageId, image);
+            },
+            onText: (text) => {
+              onTextGenerated(sessionId, modelMessageId, text);
+            },
+            onProgress: (current, total) => {
+              setSessionState(sessionId, () => ({
+                isGenerating: true,
+                progress: {
                   current: currentImageCount + current,
                   total: currentImageCount + total
-                });
-              }
-            },
-            abortControllerRef.current.signal
-          );
-        } else {
-          // Use Gemini service
-          await generateImageBatchStream(
-            providerConfig.apiKey,
-            prompt,
-            history,
-            settings,
-            uploadedImages,
-            {
-              onImage: (image) => {
-                onImageGenerated(modelMessageId, image);
-              },
-              onText: (text) => {
-                onTextGenerated(modelMessageId, text);
-              },
-              onProgress: (current, total) => {
-                setProgress({
-                  current: currentImageCount + current,
-                  total: currentImageCount + total
-                });
-              }
-            },
-            abortControllerRef.current.signal
-          );
-        }
+                },
+                currentMessageId: modelMessageId
+              }));
+            }
+          }
+        });
       } catch (error) {
         logError('Image Retry', error);
 
-        if (!abortControllerRef.current?.signal.aborted) {
+        if (!controller.signal.aborted) {
           const classifiedError = classifyError(error);
-          onError(modelMessageId, classifiedError);
+          onError(sessionId, modelMessageId, classifiedError);
         }
       } finally {
-        if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
-          setIsGenerating(false);
-          setProgress(null);
-          abortControllerRef.current = null;
+        if (abortControllersRef.current[sessionId] === controller) {
+          delete abortControllersRef.current[sessionId];
+          setSessionState(sessionId, () => ({
+            isGenerating: false,
+            progress: null,
+            currentMessageId: undefined
+          }));
         }
       }
     },
-    [onImageGenerated, onTextGenerated, onError]
+    [onImageGenerated, onTextGenerated, onError, setSessionState]
   );
 
   return {
-    isGenerating,
-    progress,
+    generationStates,
     generateImages,
     retryGeneration,
     stopGeneration

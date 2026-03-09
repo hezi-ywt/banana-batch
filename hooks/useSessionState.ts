@@ -1,14 +1,22 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type React from 'react';
 import { Session, Message } from '../types';
 import { generateUUID } from '../utils/uuid';
+import {
+  getAllSessions,
+  putSession,
+  deleteSessionById,
+  getMetaValue,
+  setMetaValue
+} from '../utils/indexedDb';
 
-const STORAGE_KEY = 'banana-batch-sessions';
-const CURRENT_SESSION_KEY = 'banana-batch-current-session';
+const LEGACY_STORAGE_KEY = 'banana-batch-sessions';
+const LEGACY_CURRENT_SESSION_KEY = 'banana-batch-current-session';
+const META_CURRENT_SESSION_KEY = 'currentSessionId';
 
-function getStoredSessions(): Session[] {
+function getLegacySessions(): Session[] {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (stored) {
       return JSON.parse(stored);
     }
@@ -20,9 +28,9 @@ function getStoredSessions(): Session[] {
   return [];
 }
 
-function getStoredCurrentSessionId(): string | null {
+function getLegacyCurrentSessionId(): string | null {
   try {
-    return localStorage.getItem(CURRENT_SESSION_KEY);
+    return localStorage.getItem(LEGACY_CURRENT_SESSION_KEY);
   } catch (error) {
     if (import.meta.env.DEV) {
       console.error('Failed to load current session ID:', error);
@@ -31,22 +39,13 @@ function getStoredCurrentSessionId(): string | null {
   return null;
 }
 
-function storeSessions(sessions: Session[]): void {
+function clearLegacyStorage(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_CURRENT_SESSION_KEY);
   } catch (error) {
     if (import.meta.env.DEV) {
-      console.error('Failed to save sessions to localStorage:', error);
-    }
-  }
-}
-
-function storeCurrentSessionId(sessionId: string): void {
-  try {
-    localStorage.setItem(CURRENT_SESSION_KEY, sessionId);
-  } catch (error) {
-    if (import.meta.env.DEV) {
-      console.error('Failed to save current session ID:', error);
+      console.error('Failed to clear legacy storage:', error);
     }
   }
 }
@@ -67,8 +66,8 @@ export function useSessionState() {
     sessions: Session[];
     currentSessionId: string;
   }>(() => {
-    const stored = getStoredSessions();
-    const storedId = getStoredCurrentSessionId();
+    const stored = getLegacySessions();
+    const storedId = getLegacyCurrentSessionId();
 
     // Case 1: Have stored sessions
     if (stored.length > 0) {
@@ -89,8 +88,6 @@ export function useSessionState() {
     // Case 2: No stored sessions, create new one
     const newSession = createNewSession();
     const initialSessions = [newSession];
-    storeSessions(initialSessions);
-    storeCurrentSessionId(newSession.id);
 
     return {
       sessions: initialSessions,
@@ -100,6 +97,13 @@ export function useSessionState() {
 
   const sessions = state.sessions;
   const currentSessionId = state.currentSessionId;
+  const sessionsRef = useRef<Session[]>(sessions);
+  const prevSessionsRef = useRef<Session[]>([]);
+  const hasHydratedRef = useRef(false);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   // Update sessions while preserving currentSessionId
   const setSessions = useCallback((updater: React.SetStateAction<Session[]>) => {
@@ -120,19 +124,126 @@ export function useSessionState() {
     }));
   }, []);
 
-  // Persist sessions to localStorage whenever they change
+  // Persist sessions to IndexedDB whenever they change
   useEffect(() => {
-    storeSessions(sessions);
+    const persist = async () => {
+      const prev = prevSessionsRef.current;
+      const current = sessions;
+      prevSessionsRef.current = current;
+
+      const prevMap = new Map(prev.map((session) => [session.id, session]));
+      const currentMap = new Map(current.map((session) => [session.id, session]));
+
+      for (const session of current) {
+        const previous = prevMap.get(session.id);
+        if (!previous || previous.updatedAt !== session.updatedAt) {
+          try {
+            await putSession(session);
+          } catch (error) {
+            if (import.meta.env.DEV) {
+              console.error('Failed to persist session:', error);
+            }
+          }
+        }
+      }
+
+      for (const session of prev) {
+        if (!currentMap.has(session.id)) {
+          try {
+            await deleteSessionById(session.id);
+          } catch (error) {
+            if (import.meta.env.DEV) {
+              console.error('Failed to delete session from DB:', error);
+            }
+          }
+        }
+      }
+    };
+
+    if (hasHydratedRef.current) {
+      void persist();
+    }
   }, [sessions]);
 
   // Persist current session ID whenever it changes
   useEffect(() => {
-    storeCurrentSessionId(currentSessionId);
+    if (!hasHydratedRef.current) return;
+    void setMetaValue(META_CURRENT_SESSION_KEY, currentSessionId);
   }, [currentSessionId]);
+
+  // Hydrate from IndexedDB, fallback to legacy localStorage if needed
+  useEffect(() => {
+    let isCancelled = false;
+
+    const hydrate = async () => {
+      try {
+        const [dbSessions, dbCurrentId] = await Promise.all([
+          getAllSessions(),
+          getMetaValue<string>(META_CURRENT_SESSION_KEY)
+        ]);
+
+        if (isCancelled) return;
+
+        if (dbSessions.length > 0) {
+          const nextId =
+            dbCurrentId && dbSessions.some((session) => session.id === dbCurrentId)
+              ? dbCurrentId
+              : dbSessions[0].id;
+          prevSessionsRef.current = dbSessions;
+          setState({ sessions: dbSessions, currentSessionId: nextId });
+          hasHydratedRef.current = true;
+          return;
+        }
+
+        const legacySessions = getLegacySessions();
+        const legacyId = getLegacyCurrentSessionId();
+
+        if (legacySessions.length > 0) {
+          const nextId =
+            legacyId && legacySessions.some((session) => session.id === legacyId)
+              ? legacyId
+              : legacySessions[0].id;
+          prevSessionsRef.current = legacySessions;
+          setState({ sessions: legacySessions, currentSessionId: nextId });
+          hasHydratedRef.current = true;
+          clearLegacyStorage();
+
+          await Promise.all([
+            ...legacySessions.map((session) => putSession(session)),
+            setMetaValue(META_CURRENT_SESSION_KEY, nextId)
+          ]);
+          return;
+        }
+
+        hasHydratedRef.current = true;
+        prevSessionsRef.current = sessionsRef.current;
+        await Promise.all([
+          ...sessionsRef.current.map((session) => putSession(session)),
+          setMetaValue(META_CURRENT_SESSION_KEY, currentSessionId)
+        ]);
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.error('Failed to hydrate sessions from IndexedDB:', error);
+        }
+        hasHydratedRef.current = true;
+      }
+    };
+
+    void hydrate();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const getCurrentSession = useCallback((): Session | undefined => {
     return sessions.find(s => s.id === currentSessionId);
   }, [sessions, currentSessionId]);
+
+  const getLatestSessionMessages = useCallback((sessionId: string): Message[] => {
+    const session = sessionsRef.current.find(s => s.id === sessionId);
+    return session ? session.messages : [];
+  }, []);
 
   const createSession = useCallback(() => {
     const newSession = createNewSession();
@@ -188,6 +299,19 @@ export function useSessionState() {
     );
   }, [setSessions]);
 
+  const updateSessionMessagesById = useCallback(
+    (sessionId: string, updater: (prevMessages: Message[]) => Message[]) => {
+      setSessions(prev =>
+        prev.map(session =>
+          session.id === sessionId
+            ? { ...session, messages: updater(session.messages), updatedAt: Date.now() }
+            : session
+        )
+      );
+    },
+    [setSessions]
+  );
+
   const clearCurrentSession = useCallback(() => {
     setSessions(prev =>
       prev.map(session =>
@@ -202,11 +326,13 @@ export function useSessionState() {
     sessions,
     currentSessionId,
     getCurrentSession,
+    getLatestSessionMessages,
     createSession,
     switchSession,
     deleteSession,
     updateSessionTitle,
     updateSessionMessages,
+    updateSessionMessagesById,
     clearCurrentSession
   };
 }
