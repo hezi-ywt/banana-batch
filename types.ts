@@ -12,7 +12,25 @@ export interface UploadedImage {
   name?: string; // Original filename
 }
 
-export type AspectRatio = 'Auto' | '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
+export const ASPECT_RATIO_OPTIONS = [
+  { value: 'Auto', label: 'Auto Ratio' },
+  { value: '1:1', label: '1:1 Square' },
+  { value: '1:4', label: '1:4 Ultra Tall' },
+  { value: '1:8', label: '1:8 Ultra Tall' },
+  { value: '2:3', label: '2:3 Portrait' },
+  { value: '3:2', label: '3:2 Landscape' },
+  { value: '3:4', label: '3:4 Portrait' },
+  { value: '4:1', label: '4:1 Panorama' },
+  { value: '4:3', label: '4:3 Landscape' },
+  { value: '4:5', label: '4:5 Portrait' },
+  { value: '5:4', label: '5:4 Landscape' },
+  { value: '8:1', label: '8:1 Panorama' },
+  { value: '9:16', label: '9:16 Tall' },
+  { value: '16:9', label: '16:9 Wide' },
+  { value: '21:9', label: '21:9 Cinematic' }
+] as const;
+
+export type AspectRatio = (typeof ASPECT_RATIO_OPTIONS)[number]['value'];
 export type Resolution = '1K' | '2K' | '4K';
 export type Provider = 'gemini' | 'openai';
 

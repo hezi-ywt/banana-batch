@@ -88,21 +88,16 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
   // Memoize aspect ratio style calculation
   const getAspectRatioStyle = useMemo(
     () => (ratio?: AspectRatio) => {
-      switch (ratio) {
-        case '1:1':
-          return { aspectRatio: '1 / 1' };
-        case '3:4':
-          return { aspectRatio: '3 / 4' };
-        case '4:3':
-          return { aspectRatio: '4 / 3' };
-        case '9:16':
-          return { aspectRatio: '9 / 16' };
-        case '16:9':
-          return { aspectRatio: '16 / 9' };
-        case 'Auto':
-        default:
-          return { aspectRatio: '1 / 1' };
+      if (!ratio || ratio === 'Auto') {
+        return { aspectRatio: '1 / 1' };
       }
+
+      const [width, height] = ratio.split(':').map(Number);
+      if (!width || !height) {
+        return { aspectRatio: '1 / 1' };
+      }
+
+      return { aspectRatio: `${width} / ${height}` };
     },
     []
   );
