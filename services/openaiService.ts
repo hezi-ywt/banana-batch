@@ -63,18 +63,20 @@ function mapAspectRatioToOpenAISize(aspectRatio: AspectRatio | undefined, model:
   const normalizedModel = model.toLowerCase();
   const useDalleSizes = normalizedModel.includes('dall-e-3');
 
-  switch (aspectRatio) {
-    case '9:16':
-    case '3:4':
-      return useDalleSizes ? '1024x1792' : '1024x1536';
-    case '16:9':
-    case '4:3':
-      return useDalleSizes ? '1792x1024' : '1536x1024';
-    case '1:1':
-    case 'Auto':
-    default:
-      return '1024x1024';
+  if (!aspectRatio || aspectRatio === 'Auto') {
+    return '1024x1024';
   }
+
+  const [width, height] = aspectRatio.split(':').map(Number);
+  if (!width || !height || width === height) {
+    return '1024x1024';
+  }
+
+  if (width < height) {
+    return useDalleSizes ? '1024x1792' : '1024x1536';
+  }
+
+  return useDalleSizes ? '1792x1024' : '1536x1024';
 }
 
 function mapResolutionToOpenAIQuality(

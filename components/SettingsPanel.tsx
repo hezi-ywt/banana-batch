@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Layers, Monitor, Square, Key, Sun, Moon, Trash2, Download, Upload } from 'lucide-react';
-import { AppSettings, AspectRatio, Resolution, Message, ProviderConfig, Provider } from '../types';
+import { AppSettings, AspectRatio, Resolution, Message, ProviderConfig, Provider, ASPECT_RATIO_OPTIONS } from '../types';
 import ProviderConfigPanel from './ProviderConfigPanel';
 
 interface SettingsPanelProps {
@@ -241,14 +241,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
             }`}
          >
-            <option value="Auto">Auto Ratio</option>
-            <option value="1:1">1:1 Square</option>
-            <option value="3:4">3:4 Portrait</option>
-            <option value="4:3">4:3 Landscape</option>
-            <option value="9:16">9:16 Tall</option>
-            <option value="16:9">16:9 Wide</option>
+            {ASPECT_RATIO_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
          </select>
-      </div>
+       </div>
 
       {/* Resolution */}
       <div className={`flex items-center space-x-2 border-r pr-4 ${
