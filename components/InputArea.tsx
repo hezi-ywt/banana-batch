@@ -25,6 +25,9 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
+  const [draggingImageId, setDraggingImageId] = useState<string | null>(null);
+  const [dragOverImageId, setDragOverImageId] = useState<string | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after'>('before');
   const dragCounterRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const MIN_TEXTAREA_HEIGHT = 64;
@@ -49,6 +52,30 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   useLayoutEffect(() => {
     adjustTextareaHeight();
   }, [text, adjustTextareaHeight]);
+
+  const isFileDragEvent = (e: DragEvent<HTMLElement>) => e.dataTransfer.types.includes('Files');
+
+  const reorderUploadedImages = useCallback(
+    (sourceImageId: string, targetImageId: string, position: 'before' | 'after') => {
+      setUploadedImages((prev) => {
+        const sourceIndex = prev.findIndex((img) => img.id === sourceImageId);
+        const targetIndex = prev.findIndex((img) => img.id === targetImageId);
+
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+          return prev;
+        }
+
+        const nextImages = [...prev];
+        const [sourceImage] = nextImages.splice(sourceIndex, 1);
+        const normalizedTargetIndex = nextImages.findIndex((img) => img.id === targetImageId);
+        const insertIndex = position === 'before' ? normalizedTargetIndex : normalizedTargetIndex + 1;
+
+        nextImages.splice(insertIndex, 0, sourceImage);
+        return nextImages;
+      });
+    },
+    []
+  );
 
   const processFiles = async (files: FileList) => {
     const fileArray = Array.from(files);
@@ -173,6 +200,10 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   };
 
   const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDragEvent(e)) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     dragCounterRef.current++;
@@ -182,6 +213,10 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   };
 
   const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDragEvent(e)) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     dragCounterRef.current--;
@@ -192,11 +227,19 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
   };
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDragEvent(e)) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!isFileDragEvent(e)) {
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
     dragCounterRef.current = 0;
@@ -212,6 +255,96 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
 
   const removeImage = (id: string) => {
     setUploadedImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const resetImageSortDragState = () => {
+    setDraggingImageId(null);
+    setDragOverImageId(null);
+    setDragOverPosition('before');
+  };
+
+  const getDropPosition = (e: DragEvent<HTMLDivElement>): 'before' | 'after' => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeX = e.clientX - rect.left;
+    return relativeX < rect.width / 2 ? 'before' : 'after';
+  };
+
+  const handleImageDragStart = (e: DragEvent<HTMLDivElement>, imageId: string) => {
+    if (disabled || isProcessingImages || uploadedImages.length <= 1) {
+      e.preventDefault();
+      return;
+    }
+
+    setDraggingImageId(imageId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', imageId);
+  };
+
+  const handleImageDragOver = (e: DragEvent<HTMLDivElement>, imageId: string) => {
+    if (!draggingImageId || draggingImageId === imageId) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+
+    setDragOverImageId(imageId);
+    setDragOverPosition(getDropPosition(e));
+  };
+
+  const handleImageDrop = (e: DragEvent<HTMLDivElement>, imageId: string) => {
+    if (!draggingImageId) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (draggingImageId !== imageId) {
+      const position = getDropPosition(e);
+      reorderUploadedImages(draggingImageId, imageId, position);
+    }
+
+    resetImageSortDragState();
+  };
+
+  const handleImageDragEnd = () => {
+    resetImageSortDragState();
+  };
+
+  const handlePreviewDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!draggingImageId) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverImageId(null);
+  };
+
+  const handlePreviewDrop = (e: DragEvent<HTMLDivElement>) => {
+    if (!draggingImageId) {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    setUploadedImages((prev) => {
+      const sourceIndex = prev.findIndex((img) => img.id === draggingImageId);
+      if (sourceIndex < 0 || sourceIndex === prev.length - 1) {
+        return prev;
+      }
+
+      const nextImages = [...prev];
+      const [sourceImage] = nextImages.splice(sourceIndex, 1);
+      nextImages.push(sourceImage);
+      return nextImages;
+    });
+
+    resetImageSortDragState();
   };
 
   const handleSend = () => {
@@ -268,12 +401,34 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, onStop, disabled, theme, 
 
         {/* Image Preview */}
         {uploadedImages.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2.5">
+          <div
+            className="mb-3 flex flex-wrap gap-2.5"
+            onDragOver={handlePreviewDragOver}
+            onDrop={handlePreviewDrop}
+          >
             {uploadedImages.map((img, index) => {
               const imageNumber = index + 1;
               const chineseNumber = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][imageNumber - 1] || imageNumber.toString();
               return (
-                <div key={img.id} className="relative group">
+                <div
+                  key={img.id}
+                  draggable={!disabled && !isProcessingImages && uploadedImages.length > 1}
+                  onDragStart={(e) => handleImageDragStart(e, img.id)}
+                  onDragOver={(e) => handleImageDragOver(e, img.id)}
+                  onDrop={(e) => handleImageDrop(e, img.id)}
+                  onDragEnd={handleImageDragEnd}
+                  className={`relative group ${draggingImageId === img.id ? 'opacity-70 scale-95' : ''}`}
+                  title={uploadedImages.length > 1 ? '可拖动调整顺序' : undefined}
+                >
+                  {dragOverImageId === img.id && draggingImageId !== img.id && (
+                    <div
+                      className={`
+                        pointer-events-none absolute top-0 bottom-0 w-1 rounded-full z-20
+                        ${dragOverPosition === 'before' ? '-left-1' : '-right-1'}
+                        ${isLight ? 'bg-indigo-600' : 'bg-indigo-400'}
+                      `}
+                    />
+                  )}
                   <div className={`
                     relative w-24 h-24 rounded-xl overflow-hidden border-2 transition-all duration-200
                     ${isLight
