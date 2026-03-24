@@ -7,7 +7,11 @@ import {
   putSession,
   deleteSessionById,
   getMetaValue,
-  setMetaValue
+  setMetaValue,
+  maybeCleanupStorage,
+  touchImageAccess,
+  getStorageEstimate,
+  BACKGROUND_CLEANUP_THRESHOLD_BYTES
 } from '../utils/indexedDb';
 
 const LEGACY_STORAGE_KEY = 'banana-batch-sessions';
@@ -97,12 +101,25 @@ export function useSessionState() {
 
   const sessions = state.sessions;
   const currentSessionId = state.currentSessionId;
+  const cleanupScheduledRef = useRef<number | null>(null);
+  const cleanupInFlightRef = useRef(false);
   const sessionsRef = useRef<Session[]>(sessions);
   const prevSessionsRef = useRef<Session[]>([]);
   const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     sessionsRef.current = sessions;
+  }, [sessions]);
+
+  useEffect(() => {
+    const imageIds = sessions
+      .flatMap((session) => session.messages)
+      .flatMap((message) => [
+        ...(message.images?.map((image) => image.id) ?? []),
+        ...(message.uploadedImages?.map((image) => image.id) ?? [])
+      ]);
+
+    void touchImageAccess(imageIds);
   }, [sessions]);
 
   // Update sessions while preserving currentSessionId
@@ -131,8 +148,8 @@ export function useSessionState() {
       const current = sessions;
       prevSessionsRef.current = current;
 
-      const prevMap = new Map(prev.map((session) => [session.id, session]));
-      const currentMap = new Map(current.map((session) => [session.id, session]));
+      const prevMap = new Map<string, Session>(prev.map((session) => [session.id, session]));
+      const currentMap = new Map<string, Session>(current.map((session) => [session.id, session]));
 
       for (const session of current) {
         const previous = prevMap.get(session.id);
@@ -163,6 +180,55 @@ export function useSessionState() {
     if (hasHydratedRef.current) {
       void persist();
     }
+  }, [sessions]);
+
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+
+    const scheduleCleanup = async () => {
+      if (cleanupInFlightRef.current) {
+        return;
+      }
+
+      const estimate = await getStorageEstimate();
+      if (estimate.usageBytes < BACKGROUND_CLEANUP_THRESHOLD_BYTES) {
+        return;
+      }
+
+      cleanupInFlightRef.current = true;
+
+      try {
+        await maybeCleanupStorage();
+
+        const refreshedSessions = await getAllSessions();
+        if (refreshedSessions.length > 0) {
+          setState((prev) => ({
+            sessions: refreshedSessions,
+            currentSessionId: refreshedSessions.some((session) => session.id === prev.currentSessionId)
+              ? prev.currentSessionId
+              : refreshedSessions[0].id
+          }));
+        }
+      } finally {
+        cleanupInFlightRef.current = false;
+      }
+    };
+
+    if (cleanupScheduledRef.current !== null) {
+      window.clearTimeout(cleanupScheduledRef.current);
+    }
+
+    cleanupScheduledRef.current = window.setTimeout(() => {
+      void scheduleCleanup();
+      cleanupScheduledRef.current = null;
+    }, 300);
+
+    return () => {
+      if (cleanupScheduledRef.current !== null) {
+        window.clearTimeout(cleanupScheduledRef.current);
+        cleanupScheduledRef.current = null;
+      }
+    };
   }, [sessions]);
 
   // Persist current session ID whenever it changes
@@ -322,6 +388,31 @@ export function useSessionState() {
     );
   }, [currentSessionId, setSessions]);
 
+  const cleanupCache = useCallback(async () => {
+    if (cleanupInFlightRef.current) {
+      return { mode: 'none' as const, deletedImageIds: [], deletedBytes: 0 };
+    }
+
+    cleanupInFlightRef.current = true;
+    try {
+      const result = await maybeCleanupStorage();
+      const refreshedSessions = await getAllSessions();
+
+      if (refreshedSessions.length > 0) {
+        setState((prev) => ({
+          sessions: refreshedSessions,
+          currentSessionId: refreshedSessions.some((session) => session.id === prev.currentSessionId)
+            ? prev.currentSessionId
+            : refreshedSessions[0].id
+        }));
+      }
+
+      return result;
+    } finally {
+      cleanupInFlightRef.current = false;
+    }
+  }, []);
+
   return {
     sessions,
     currentSessionId,
@@ -333,6 +424,7 @@ export function useSessionState() {
     updateSessionTitle,
     updateSessionMessages,
     updateSessionMessagesById,
-    clearCurrentSession
+    clearCurrentSession,
+    cleanupCache
   };
 }

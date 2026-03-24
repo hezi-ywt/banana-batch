@@ -14,8 +14,10 @@ interface SettingsPanelProps {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onClearAll?: () => void;
+  onCleanupCache?: () => void;
   hasMessages?: boolean;
   messages?: Message[];
+  storageUsage?: { usageBytes: number; budgetBytes: number; usageRatio: number; browserQuotaBytes: number } | null;
   onImportMessages?: (messages: Message[]) => void;
 }
 
@@ -30,8 +32,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   theme,
   onThemeChange,
   onClearAll,
+  onCleanupCache,
   hasMessages,
   messages,
+  storageUsage,
   onImportMessages
 }) => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -197,6 +201,18 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const isLight = theme === 'light';
 
+  const formatStorage = (bytes: number) => {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  };
+
   return (
     <div className={`flex flex-wrap items-center gap-4 backdrop-blur-md px-4 py-2 rounded-lg border relative transition-colors duration-200 ${
       isLight
@@ -318,6 +334,37 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           className="hidden"
         />
       </div>
+
+      {storageUsage && storageUsage.budgetBytes > 0 && (
+        <div className={`flex items-center space-x-2 border-r pr-4 text-xs ${
+          isLight ? 'border-gray-300 text-gray-600' : 'border-zinc-700 text-zinc-400'
+        }`} title="浏览器存储占用情况">
+          <span>
+            缓存 {Math.round(storageUsage.usageRatio * 100)}%
+          </span>
+          <span>
+            {formatStorage(storageUsage.usageBytes)} / {formatStorage(storageUsage.budgetBytes)}
+          </span>
+        </div>
+      )}
+
+      {onCleanupCache && (
+        <div className={`flex items-center border-r pr-4 ${
+          isLight ? 'border-gray-300' : 'border-zinc-700'
+        }`}>
+          <button
+            onClick={onCleanupCache}
+            className={`p-1.5 rounded transition-colors ${
+              isLight
+                ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                : 'text-amber-400 hover:text-amber-300 hover:bg-amber-900/20'
+            }`}
+            title="清理旧图片缓存"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Clear All Messages */}
       {onClearAll && hasMessages && (

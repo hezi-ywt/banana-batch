@@ -103,7 +103,7 @@ const SessionList: React.FC<SessionListProps> = ({
         {sessions.map(session => {
           const isActive = session.id === currentSessionId;
           const isEditing = editingSessionId === session.id;
-          const messageCount = session.messages.length;
+          const messageCount = session.messageCount ?? session.messages.length;
           const isGenerating = !!generationStates?.[session.id]?.isGenerating;
 
           return (
