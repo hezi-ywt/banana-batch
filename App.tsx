@@ -8,6 +8,7 @@ import { useImageGeneration } from './hooks/useImageGeneration';
 import { useSettings } from './hooks/useSettings';
 import { useProviderConfig } from './hooks/useProviderConfig';
 import { useTheme } from './hooks/useTheme';
+import { getStorageEstimate, AppStorageEstimate } from './utils/indexedDb';
 import MessageList from './components/MessageList';
 import InputArea from './components/InputArea';
 import SettingsPanel from './components/SettingsPanel';
@@ -26,7 +27,8 @@ const App: React.FC = () => {
     deleteSession,
     updateSessionTitle,
     updateSessionMessagesById,
-    clearCurrentSession
+    clearCurrentSession,
+    cleanupCache
   } = useSessionState();
 
   const {
@@ -46,12 +48,25 @@ const App: React.FC = () => {
 
   const { theme, setTheme } = useTheme();
   const [prefillRequest, setPrefillRequest] = useState<{ text: string; images?: UploadedImage[] } | null>(null);
+  const [storageUsage, setStorageUsage] = useState<AppStorageEstimate | null>(null);
   const currentSession = getCurrentSession();
   const messages = currentSession?.messages ?? [];
 
   useEffect(() => {
     setPrefillRequest(null);
   }, [currentSessionId]);
+
+  useEffect(() => {
+    void getStorageEstimate().then(setStorageUsage).catch(() => {
+      setStorageUsage(null);
+    });
+  }, [sessions]);
+
+  const refreshStorageUsage = useCallback(() => {
+    void getStorageEstimate().then(setStorageUsage).catch(() => {
+      setStorageUsage(null);
+    });
+  }, []);
 
   // Sync provider config to settings when it changes
   useEffect(() => {
@@ -336,6 +351,19 @@ const App: React.FC = () => {
     [updateApiKey]
   );
 
+  const handleCleanupCache = useCallback(async () => {
+    const result = await cleanupCache();
+    refreshStorageUsage();
+
+    if (result.mode === 'none') {
+      alert('当前缓存未达到清理条件，暂无可清理图片。');
+      return;
+    }
+
+    const deletedMB = (result.deletedBytes / (1024 * 1024)).toFixed(1);
+    alert(`缓存清理完成：已清理 ${result.deletedImageIds.length} 张图片，释放约 ${deletedMB} MB。`);
+  }, [cleanupCache, refreshStorageUsage]);
+
   return (
     <ErrorBoundary>
       <div
@@ -384,13 +412,16 @@ const App: React.FC = () => {
             theme={theme}
             onThemeChange={setTheme}
             onClearAll={handleClearAll}
+            onCleanupCache={handleCleanupCache}
             hasMessages={messages.length > 0}
             messages={messages}
+            storageUsage={storageUsage}
             onImportMessages={(importedMessages) => {
               if (currentGenerationState.isGenerating) {
                 stopGeneration(currentSessionId);
               }
               updateSessionMessagesById(currentSessionId, () => importedMessages);
+              refreshStorageUsage();
             }}
           />
         </header>

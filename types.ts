@@ -3,6 +3,8 @@ export interface GeneratedImage {
   data: string; // Base64 data URI
   mimeType: string;
   status: 'success' | 'error';
+  storageSize?: number;
+  lastAccessedAt?: number;
 }
 
 export interface UploadedImage {
@@ -10,6 +12,8 @@ export interface UploadedImage {
   data: string; // Base64 data URI
   mimeType: string;
   name?: string; // Original filename
+  storageSize?: number;
+  lastAccessedAt?: number;
 }
 
 export const ASPECT_RATIO_OPTIONS = [
@@ -72,4 +76,5 @@ export interface Session {
   messages: Message[];
   createdAt: number;
   updatedAt: number;
+  messageCount?: number;
 }
