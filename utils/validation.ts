@@ -47,6 +47,10 @@ const base64DataUriSchema = z
     '无效的图片数据格式（需要 base64 Data URI）'
   );
 
+function getZodErrorMessage(error: z.ZodError): string {
+  return error.issues[0]?.message || 'Invalid input';
+}
+
 /**
  * Validates API Key format
  * Note: Validation is relaxed to support various API key formats
@@ -61,7 +65,7 @@ export function validateApiKey(apiKey: string): void {
     apiKeySchema.parse(apiKey);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new ValidationError(error.errors[0].message, 'API Key');
+      throw new ValidationError(getZodErrorMessage(error), 'API Key');
     }
     throw error;
   }
@@ -75,7 +79,7 @@ export function validatePrompt(prompt: string): void {
     promptSchema.parse(prompt);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new ValidationError(error.errors[0].message, '提示词');
+      throw new ValidationError(getZodErrorMessage(error), '提示词');
     }
     throw error;
   }
@@ -89,7 +93,7 @@ export function validateBatchSize(batchSize: number): void {
     batchSizeSchema.parse(batchSize);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new ValidationError(error.errors[0].message, '批次大小');
+      throw new ValidationError(getZodErrorMessage(error), '批次大小');
     }
     throw error;
   }
@@ -103,7 +107,7 @@ export function validateImageData(data: string): void {
     base64DataUriSchema.parse(data);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new ValidationError(error.errors[0].message, '图片数据');
+      throw new ValidationError(getZodErrorMessage(error), '图片数据');
     }
     throw error;
   }

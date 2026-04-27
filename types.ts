@@ -1,6 +1,6 @@
 export interface GeneratedImage {
   id: string;
-  data: string; // Base64 data URI
+  data: string; // Base64 data URI or remote image URL
   mimeType: string;
   status: 'success' | 'error';
   storageSize?: number;
@@ -9,7 +9,7 @@ export interface GeneratedImage {
 
 export interface UploadedImage {
   id: string;
-  data: string; // Base64 data URI
+  data: string; // Base64 data URI or remote image URL
   mimeType: string;
   name?: string; // Original filename
   storageSize?: number;

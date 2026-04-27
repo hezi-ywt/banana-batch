@@ -35,7 +35,7 @@ type MessageRecord = {
   isError?: boolean;
 };
 
-type ImageRecord = {
+export type ImageRecord = {
   id: string;
   sessionId: string;
   messageId: string;
@@ -51,6 +51,8 @@ type ImageRecord = {
 };
 
 type LegacySessionRecord = Session;
+
+const hydratedImageObjectUrls = new Set<string>();
 
 export type StorageCleanupResult = {
   usageBytes: number;
@@ -145,8 +147,20 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-function estimateDataUrlSize(dataUrl: string): number {
-  const base64 = dataUrl.split(',')[1] || '';
+function isDataUrl(value: string): boolean {
+  return value.startsWith('data:');
+}
+
+function isRuntimeBlobUrl(value: string): boolean {
+  return value.startsWith('blob:');
+}
+
+function estimateImageDataSize(data: string): number {
+  if (!isDataUrl(data)) {
+    return data.length;
+  }
+
+  const base64 = data.split(',')[1] || '';
   return Math.ceil((base64.length * 3) / 4);
 }
 
@@ -173,16 +187,33 @@ function toMessageRecord(sessionId: string, message: Message): MessageRecord {
   };
 }
 
-function createImageRecord(
+export function createImageRecord(
   sessionId: string,
   messageId: string,
   role: 'generated' | 'uploaded',
   image: GeneratedImage | UploadedImage,
   timestamp: number,
-  status: 'success' | 'error'
+  status: 'success' | 'error',
+  existingRecord?: ImageRecord
 ): ImageRecord {
-  const size = image.data ? estimateDataUrlSize(image.data) : 0;
-  const blob = image.data ? dataUrlToBlob(image.data) : undefined;
+  const data = image.data || '';
+
+  if (isRuntimeBlobUrl(data) && existingRecord) {
+    return {
+      ...existingRecord,
+      sessionId,
+      messageId,
+      role,
+      mimeType: image.mimeType || existingRecord.mimeType,
+      name: 'name' in image ? image.name : existingRecord.name,
+      status,
+      lastAccessedAt: image.lastAccessedAt ?? existingRecord.lastAccessedAt ?? timestamp
+    };
+  }
+
+  const shouldStoreAsBlob = data && isDataUrl(data) && status !== 'error';
+  const size = data ? estimateImageDataSize(data) : 0;
+  const blob = shouldStoreAsBlob ? dataUrlToBlob(data) : undefined;
 
   return {
     id: image.id,
@@ -190,7 +221,7 @@ function createImageRecord(
     messageId,
     role,
     blob,
-    dataUrl: status === 'error' ? image.data : undefined,
+    dataUrl: shouldStoreAsBlob ? undefined : data || undefined,
     mimeType: image.mimeType,
     name: 'name' in image ? image.name : undefined,
     status,
@@ -267,6 +298,7 @@ async function persistSessionGraph(
     const nextImageIds = new Set(nextImages.map((image) => image.id));
 
     const existingImages = existingImagesByMessageId.get(message.id) ?? [];
+    const existingImageById = new Map(existingImages.map((image) => [image.id, image]));
 
     for (const staleImage of existingImages) {
       if (!nextImageIds.has(staleImage.id) && !protectedImageIds.has(staleImage.id)) {
@@ -276,13 +308,29 @@ async function persistSessionGraph(
 
     for (const image of message.images ?? []) {
       imageStore.put(
-        createImageRecord(session.id, message.id, 'generated', image, message.timestamp, image.status)
+        createImageRecord(
+          session.id,
+          message.id,
+          'generated',
+          image,
+          message.timestamp,
+          image.status,
+          existingImageById.get(image.id)
+        )
       );
     }
 
     for (const image of message.uploadedImages ?? []) {
       imageStore.put(
-        createImageRecord(session.id, message.id, 'uploaded', image, message.timestamp, 'success')
+        createImageRecord(
+          session.id,
+          message.id,
+          'uploaded',
+          image,
+          message.timestamp,
+          'success',
+          existingImageById.get(image.id)
+        )
       );
     }
   }
@@ -290,10 +338,11 @@ async function persistSessionGraph(
   await transactionDone(tx);
 }
 
-async function hydrateImageRecord(record: ImageRecord): Promise<GeneratedImage | UploadedImage> {
+export async function hydrateImageRecord(record: ImageRecord): Promise<GeneratedImage | UploadedImage> {
   let data = record.dataUrl;
   if (!data && record.blob) {
-    data = await blobToDataUrl(record.blob);
+    data = URL.createObjectURL(record.blob);
+    hydratedImageObjectUrls.add(data);
   }
 
   return {
@@ -305,6 +354,30 @@ async function hydrateImageRecord(record: ImageRecord): Promise<GeneratedImage |
     storageSize: record.size,
     lastAccessedAt: record.lastAccessedAt
   } as GeneratedImage | UploadedImage;
+}
+
+export function revokeUnusedHydratedImageObjectUrls(activeUrls: Iterable<string>): void {
+  const active = new Set(activeUrls);
+  for (const url of [...hydratedImageObjectUrls]) {
+    if (!active.has(url)) {
+      URL.revokeObjectURL(url);
+      hydratedImageObjectUrls.delete(url);
+    }
+  }
+}
+
+export function revokeAllHydratedImageObjectUrls(): void {
+  for (const url of [...hydratedImageObjectUrls]) {
+    URL.revokeObjectURL(url);
+    hydratedImageObjectUrls.delete(url);
+  }
+}
+
+export function shouldDeleteImageForAutomaticCleanup(
+  image: ImageRecord,
+  protectedImageIds: Set<string>
+): boolean {
+  return image.status !== 'success' && !protectedImageIds.has(image.id);
 }
 
 async function hydrateSession(db: IDBDatabase, sessionRecord: SessionRecord): Promise<Session> {
@@ -601,7 +674,7 @@ export async function maybeCleanupStorage(): Promise<StorageCleanupResult> {
     let projectedUsage = estimate.usageBytes;
 
     for (const image of candidates) {
-      if (protectedImageIds.has(image.id)) {
+      if (!shouldDeleteImageForAutomaticCleanup(image, protectedImageIds)) {
         continue;
       }
 

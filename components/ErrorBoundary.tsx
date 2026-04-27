@@ -1,4 +1,4 @@
-import React, { Component, ReactNode } from 'react';
+import React, { ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -13,7 +13,11 @@ interface State {
 /**
  * Error Boundary component to catch and display React errors gracefully
  */
-class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends React.Component<Props, State> {
+  declare props: Props;
+  declare setState: (state: State) => void;
+  state: State;
+
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false, error: null };

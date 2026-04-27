@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Message, AspectRatio } from '../types';
 import { User, Sparkles, CheckCircle2, Circle, AlertTriangle, Loader2, ChevronDown, ChevronUp, MessageSquare, RotateCcw, RefreshCcw, Trash2, Download } from 'lucide-react';
 import ImagePreviewModal from './ImagePreviewModal';
+import { getVisibleMessageImages, shouldShowImageExpansionToggle } from '../utils/messageImageDisplay';
 
 interface MessageListProps {
   messages: Message[];
@@ -21,6 +22,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
   
   // State to track which message's text details are expanded
   const [expandedTextId, setExpandedTextId] = useState<string | null>(null);
+  const [expandedImageMessageIds, setExpandedImageMessageIds] = useState<Set<string>>(() => new Set());
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
 
   // Optimize scroll behavior - only scroll when messages change or progress updates
@@ -34,6 +36,18 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
     setExpandedTextId((prev) => (prev === id ? null : id));
   }, []);
 
+  const toggleImageExpansion = useCallback((id: string) => {
+    setExpandedImageMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
   const openPreview = useCallback((src: string, alt: string) => {
     setPreviewImage({ src, alt });
   }, []);
@@ -44,13 +58,27 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
 
   // Download image function (memoized)
   const handleDownloadImage = useCallback(
-    (e: React.MouseEvent, imageData: string, mimeType: string) => {
+    async (e: React.MouseEvent, imageData: string, mimeType: string) => {
       e.stopPropagation(); // Prevent triggering selection
 
       try {
         // Create a temporary anchor element
         const link = document.createElement('a');
-        link.href = imageData;
+        let href = imageData;
+        let objectUrl: string | undefined;
+
+        if (!imageData.startsWith('data:image/')) {
+          const response = await fetch(imageData);
+          if (!response.ok) {
+            throw new Error(`Image download failed: ${response.status}`);
+          }
+          const blob = await response.blob();
+          objectUrl = URL.createObjectURL(blob);
+          href = objectUrl;
+          mimeType = blob.type || mimeType;
+        }
+
+        link.href = href;
 
         // Generate filename with timestamp
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
@@ -61,11 +89,15 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        if (objectUrl) {
+          window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        }
       } catch (error) {
         // Only log in development
         if (import.meta.env.DEV) {
           console.error('Failed to download image:', error);
         }
+        alert('图片下载失败：远程图片不允许浏览器直接下载，请先打开预览后手动保存。');
       }
     },
     []
@@ -177,6 +209,8 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                             src={img.data}
                             alt={img.name || `图${chineseNumber}`}
                             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                            loading="lazy"
+                            decoding="async"
                           />
                           {/* Image number badge */}
                           <div className={`
@@ -284,12 +318,23 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
               {/* Image Grid (Model only) */}
               {msg.role === 'model' && msg.images && (
                 <div className="w-full">
-                  <div className={`grid gap-4 ${getGridClass(msg.images.length)}`}>
-                    {msg.images.map((img, imgIndex) => {
+                  {(() => {
+                    const isExpanded = expandedImageMessageIds.has(msg.id);
+                    const visibleImages = getVisibleMessageImages({
+                      images: msg.images,
+                      selectedImageId: msg.selectedImageId,
+                      isGenerating: currentGeneratingMessageId === msg.id,
+                      isExpanded
+                    });
+
+                    return (
+                      <>
+                  <div className={`grid gap-4 ${getGridClass(visibleImages.length)}`}>
+                    {visibleImages.map(({ image: img, originalIndex }) => {
                       const isSelected = msg.selectedImageId === img.id;
                       const hasSelection = !!msg.selectedImageId;
                       const isDiscarded = hasSelection && !isSelected;
-                      const previewAlt = `生成图片 ${imgIndex + 1}`;
+                      const previewAlt = `生成图片 ${originalIndex + 1}`;
 
                       // Error Tile
                       if (img.status === 'error') {
@@ -340,6 +385,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                             alt="Generated content" 
                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                             loading="lazy"
+                            decoding="async"
                           />
                           
                           {/* Selected Badge */}
@@ -409,6 +455,29 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isGenerating, progr
                       );
                     })}
                   </div>
+
+                  {shouldShowImageExpansionToggle({
+                    totalImageCount: msg.images.length,
+                    hiddenCount: visibleImages.hiddenCount,
+                    isExpanded
+                  }) && (
+                    <button
+                      type="button"
+                      onClick={() => toggleImageExpansion(msg.id)}
+                      className={`mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                        isLight
+                          ? 'text-indigo-600 hover:bg-indigo-50'
+                          : 'text-indigo-400 hover:bg-indigo-900/30'
+                      }`}
+                      title={isExpanded ? '收起图片' : '展开全部图片'}
+                    >
+                      {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      <span>{isExpanded ? '收起图片' : `展开全部 ${msg.images.length} 张图片`}</span>
+                    </button>
+                  )}
+                      </>
+                    );
+                  })()}
                   
                   {msg.images.length > 0 && (
                       <div className={`mt-4 flex items-center justify-between px-1 ${

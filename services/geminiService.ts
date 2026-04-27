@@ -325,7 +325,7 @@ ${prompt}`;
   // Prefer configured model, fallback to Pro
   const modelName = settings.providerConfig?.model || MODEL_PRO;
 
-  interface ImageConfig {
+  interface ImageConfig extends Record<string, unknown> {
     aspectRatio?: string;
     imageSize?: string;
   }

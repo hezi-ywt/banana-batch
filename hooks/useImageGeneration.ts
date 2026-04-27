@@ -2,6 +2,10 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Message, AppSettings, UploadedImage, GeneratedImage } from '../types';
 import { classifyError, logError } from '../utils/errorHandler';
 import { runImageGeneration } from '../core/generationEngine';
+import {
+  materializeMessagesForGeneration,
+  materializeUploadedImagesForGeneration
+} from '../utils/imageData';
 
 interface UseImageGenerationOptions {
   onImageGenerated: (sessionId: string, messageId: string, image: GeneratedImage) => void;
@@ -80,12 +84,13 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       abortControllersRef.current[sessionId] = controller;
 
       try {
-        const currentMessages = getLatestMessages(sessionId);
+        const currentMessages = await materializeMessagesForGeneration(getLatestMessages(sessionId));
+        const requestUploadedImages = await materializeUploadedImagesForGeneration(uploadedImages);
 
         await runImageGeneration({
           prompt,
           history: currentMessages,
-          uploadedImages,
+          uploadedImages: requestUploadedImages,
           settings,
           signal: controller.signal,
           callbacks: {
@@ -149,10 +154,13 @@ export function useImageGeneration(options: UseImageGenerationOptions) {
       abortControllersRef.current[sessionId] = controller;
 
       try {
+        const requestHistory = await materializeMessagesForGeneration(history);
+        const requestUploadedImages = await materializeUploadedImagesForGeneration(uploadedImages);
+
         await runImageGeneration({
           prompt,
-          history,
-          uploadedImages,
+          history: requestHistory,
+          uploadedImages: requestUploadedImages,
           settings,
           signal: controller.signal,
           callbacks: {

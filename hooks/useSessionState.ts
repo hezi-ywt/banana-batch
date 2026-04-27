@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type React from 'react';
 import { Session, Message } from '../types';
 import { generateUUID } from '../utils/uuid';
@@ -11,7 +11,9 @@ import {
   maybeCleanupStorage,
   touchImageAccess,
   getStorageEstimate,
-  BACKGROUND_CLEANUP_THRESHOLD_BYTES
+  BACKGROUND_CLEANUP_THRESHOLD_BYTES,
+  revokeAllHydratedImageObjectUrls,
+  revokeUnusedHydratedImageObjectUrls
 } from '../utils/indexedDb';
 
 const LEGACY_STORAGE_KEY = 'banana-batch-sessions';
@@ -112,15 +114,42 @@ export function useSessionState() {
   }, [sessions]);
 
   useEffect(() => {
-    const imageIds = sessions
+    const activeImageUrls = sessions
       .flatMap((session) => session.messages)
       .flatMap((message) => [
-        ...(message.images?.map((image) => image.id) ?? []),
-        ...(message.uploadedImages?.map((image) => image.id) ?? [])
+        ...(message.images?.map((image) => image.data) ?? []),
+        ...(message.uploadedImages?.map((image) => image.data) ?? [])
       ]);
 
-    void touchImageAccess(imageIds);
+    revokeUnusedHydratedImageObjectUrls(activeImageUrls);
   }, [sessions]);
+
+  useEffect(() => {
+    return () => {
+      revokeAllHydratedImageObjectUrls();
+    };
+  }, []);
+
+  const currentSessionImageIds = useMemo(() => {
+    const currentSession = sessions.find((session) => session.id === currentSessionId);
+    if (!currentSession) {
+      return [];
+    }
+
+    return currentSession.messages.flatMap((message) => [
+      ...(message.images?.map((image) => image.id) ?? []),
+      ...(message.uploadedImages?.map((image) => image.id) ?? [])
+    ]);
+  }, [sessions, currentSessionId]);
+
+  const currentSessionImageIdsKey = useMemo(
+    () => currentSessionImageIds.join('|'),
+    [currentSessionImageIds]
+  );
+
+  useEffect(() => {
+    void touchImageAccess(currentSessionImageIds);
+  }, [currentSessionImageIdsKey]);
 
   // Update sessions while preserving currentSessionId
   const setSessions = useCallback((updater: React.SetStateAction<Session[]>) => {

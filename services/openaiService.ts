@@ -13,9 +13,24 @@ import {
   NetworkError
 } from '../types/errors';
 import { StreamCallbacks } from './geminiService';
+import {
+  generateYunwuGptImage2,
+  generateYunwuGptImage2All,
+  isYunwuGptImage2AllModel,
+  isYunwuGptImage2Model
+} from './yunwuImageService';
 
 const MAX_CONCURRENT_REQUESTS = 10;
 const MAX_RETRIES = 3;
+type OpenAIImageSize =
+  | 'auto'
+  | '1024x1024'
+  | '1024x1536'
+  | '1536x1024'
+  | '1024x1792'
+  | '1792x1024'
+  | '256x256'
+  | '512x512';
 
 /**
  * Extracts base64 data from a data URI safely
@@ -59,7 +74,7 @@ function hasReferenceImages(
   );
 }
 
-function mapAspectRatioToOpenAISize(aspectRatio: AspectRatio | undefined, model: string): string {
+function mapAspectRatioToOpenAISize(aspectRatio: AspectRatio | undefined, model: string): OpenAIImageSize {
   const normalizedModel = model.toLowerCase();
   const useDalleSizes = normalizedModel.includes('dall-e-3');
 
@@ -179,6 +194,36 @@ export async function generateImageBatchStreamOpenAI(
   // Validate prompt if provided
   if (prompt) {
     validatePrompt(prompt);
+  }
+
+  if (isYunwuGptImage2Model(model)) {
+    await generateYunwuGptImage2(
+      apiKey,
+      baseUrl,
+      model,
+      prompt,
+      history,
+      settings,
+      uploadedImages,
+      callbacks,
+      signal
+    );
+    return;
+  }
+
+  if (isYunwuGptImage2AllModel(model)) {
+    await generateYunwuGptImage2All(
+      apiKey,
+      baseUrl,
+      model,
+      prompt,
+      history,
+      settings,
+      uploadedImages,
+      callbacks,
+      signal
+    );
+    return;
   }
 
   // Initialize OpenAI client with custom baseURL
@@ -394,7 +439,8 @@ export async function generateImageBatchStreamOpenAI(
           }
 
           const message = choice.message;
-          if (!message?.content) {
+          const messageContent: unknown = message?.content;
+          if (!messageContent) {
             throw new ImageProcessingError('No content in response');
           }
 
@@ -402,9 +448,9 @@ export async function generateImageBatchStreamOpenAI(
           let foundImage = false;
 
           // Handle different content formats
-          if (typeof message.content === 'string') {
+          if (typeof messageContent === 'string') {
             // Try to extract data URI from string content
-            const dataUriMatch = message.content.match(
+            const dataUriMatch = messageContent.match(
               /data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/
             );
             if (dataUriMatch) {
@@ -418,11 +464,11 @@ export async function generateImageBatchStreamOpenAI(
               foundImage = true;
             } else {
               // Text response
-              callbacks.onText(message.content);
+              callbacks.onText(messageContent);
             }
-          } else if (Array.isArray(message.content)) {
+          } else if (Array.isArray(messageContent)) {
             // Handle array content
-            for (const part of message.content) {
+            for (const part of messageContent) {
               if (typeof part === 'object' && part !== null) {
                 if ('image_url' in part && part.image_url) {
                   const imageUrl =

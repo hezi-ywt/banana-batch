@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Layers, Monitor, Square, Key, Sun, Moon, Trash2, Download, Upload } from 'lucide-react';
 import { AppSettings, AspectRatio, Resolution, Message, ProviderConfig, Provider, ASPECT_RATIO_OPTIONS } from '../types';
 import ProviderConfigPanel from './ProviderConfigPanel';
+import { isYunwuGptImage2AllModel, isYunwuGptImage2Model } from '../services/yunwuImageService';
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -41,6 +42,21 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const aspectRatioOptions = isYunwuGptImage2Model(providerConfig.model)
+    ? ASPECT_RATIO_OPTIONS.filter((option) =>
+        ['Auto', '1:1', '3:2', '2:3', '16:9', '9:16'].includes(option.value)
+      )
+    : isYunwuGptImage2AllModel(providerConfig.model)
+    ? ASPECT_RATIO_OPTIONS.filter((option) =>
+        ['Auto', '1:1', '3:2', '2:3', '16:9'].includes(option.value)
+      )
+    : ASPECT_RATIO_OPTIONS;
+
+  useEffect(() => {
+    if (!aspectRatioOptions.some((option) => option.value === settings.aspectRatio)) {
+      updateSettings({ aspectRatio: 'Auto' });
+    }
+  }, [aspectRatioOptions, settings.aspectRatio, updateSettings]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -257,7 +273,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
             }`}
          >
-            {ASPECT_RATIO_OPTIONS.map((option) => (
+            {aspectRatioOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>

@@ -21,6 +21,8 @@ const GEMINI_MODELS = [
 
 // Predefined OpenAI compatible models
 const OPENAI_MODELS = [
+  { value: 'gpt-image-2', label: 'GPT Image 2 (Yunwu)' },
+  { value: 'gpt-image-2-all', label: 'GPT Image 2 All (快速生图)' },
   { value: 'gpt-image-1', label: 'GPT Image 1' },
   { value: 'gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (推荐)' },
   { value: 'gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (快速)' },
@@ -459,23 +461,21 @@ const ProviderConfigPanel: React.FC<ProviderConfigPanelProps> = ({
             : 'bg-blue-900/20 text-blue-300 border border-blue-900/50'
         }`}
       >
-        <p className="font-semibold mb-1">配置说明:</p>
+        <p className="font-semibold mb-1">注意事项:</p>
         <ul className="space-y-1 list-disc list-inside">
           {config.provider === 'gemini' ? (
             <>
-              <li>使用 Google Gemini API</li>
-              <li>支持预设模型或自定义模型</li>
-              <li>推荐: Gemini 3 Pro Image (高质量)</li>
-              <li>快速: Gemini 3.1 Flash Image (速度快)</li>
+              <li>API Key 仅保存在当前浏览器本地。</li>
+              <li>2K/4K 通常比 1K 更慢，失败时先用 1K 测试。</li>
+              <li>带参考图会增加处理时间，请控制图片大小。</li>
+              <li>只有选中的历史图片会参与下一轮生成。</li>
             </>
           ) : (
             <>
-              <li>支持 OpenAI 和任何兼容接口</li>
-              <li>支持预设模型 (Gemini, GPT-4o) 或自定义模型</li>
-              <li>可自定义 Base URL</li>
-              <li>
-                Google AI 端点: https://generativelanguage.googleapis.com/v1beta/openai/
-              </li>
+              <li>云雾 Base URL 填 https://yunwu.ai/v1。</li>
+              <li>API Key 仅保存在当前浏览器本地。</li>
+              <li>GPT Image 2 适合完整尺寸；GPT Image 2 All 更适合快速图文生图。</li>
+              <li>比例和分辨率会按当前模型自动过滤或映射。</li>
             </>
           )}
         </ul>
